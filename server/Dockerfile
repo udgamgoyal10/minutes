@@ -1,9 +1,9 @@
-FROM oven/bun:1.3.10-debian AS deps
+FROM oven/bun:1-debian AS deps
 WORKDIR /app
 COPY package.json bun.lockb* ./
 RUN bun install --frozen-lockfile || bun install
 
-FROM oven/bun:1.3.10-debian AS runtime
+FROM oven/bun:1-debian AS runtime
 WORKDIR /app
 
 # OCR/PDF tooling

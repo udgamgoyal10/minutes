@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.10-debian AS build
+FROM oven/bun:1-debian AS build
 WORKDIR /app
 COPY package.json bun.lockb* ./
 RUN bun install --frozen-lockfile || bun install
