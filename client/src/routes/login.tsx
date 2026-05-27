@@ -6,7 +6,7 @@ import { useAuth } from "../lib/auth.tsx";
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@example.com");
+  const [email, setEmail] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,9 +34,9 @@ export function LoginPage() {
           <h1 className="text-xl font-semibold">Meeting Minutes</h1>
         </div>
         <label className="block">
-          <span className="text-sm text-slate-700">Email</span>
+          <span className="text-sm text-slate-700">Username</span>
           <input
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
