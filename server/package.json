@@ -1,0 +1,22 @@
+{
+  "name": "minutes-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "lint": "oxlint src",
+    "fmt": "oxfmt src"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "jszip": "^3.10.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "oxlint": "^0.15.0",
+    "typescript": "^5.6.0"
+  }
+}

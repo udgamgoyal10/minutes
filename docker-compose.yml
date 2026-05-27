@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./server
+    env_file: .env
+    environment:
+      SQLITE_PATH: /data/minutes.db
+      UPLOAD_DIR: /data/uploads
+      EXPORT_DIR: /data/exports
+    volumes:
+      - minutes-data:/data
+      - ./server/templates:/app/templates:ro
+    expose:
+      - "8787"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./client
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    env_file: .env
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+    restart: unless-stopped
+    profiles: ["tunnel"]
+
+volumes:
+  minutes-data:
