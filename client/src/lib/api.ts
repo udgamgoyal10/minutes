@@ -68,6 +68,7 @@ export type SectionDraft = {
   ordinal: number;
   title: string;
   content_md: string;
+  template_body_text: string;
   preview_md: string;
   status: "pending" | "draft" | "approved";
   mode: "template" | "ai";
@@ -189,10 +190,15 @@ export function useUpdateMeeting(id: number) {
   });
 }
 
-export function useSources(meetingId: number | null) {
+export function useSources(meetingId: number | null, sectionKey?: string) {
   return useQuery({
-    queryKey: ["meetings", meetingId, "sources"],
-    queryFn: () => apiFetch<{ sources: Source[] }>(`/api/meetings/${meetingId}/sources`),
+    queryKey: ["meetings", meetingId, "sources", sectionKey ?? "all"],
+    queryFn: () => {
+      const path = sectionKey
+        ? `/api/meetings/${meetingId}/sources?section_key=${encodeURIComponent(sectionKey)}`
+        : `/api/meetings/${meetingId}/sources`;
+      return apiFetch<{ sources: Source[] }>(path);
+    },
     enabled: meetingId != null,
   });
 }
@@ -289,6 +295,17 @@ export function useReorderSections(meetingId: number) {
       apiFetch<{ sections: SectionDraft[] }>(`/api/meetings/${meetingId}/sections/reorder`, {
         method: "PATCH",
         body: JSON.stringify({ section_keys: sectionKeys }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export function useRevertSection(meetingId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections/${key}/revert`, {
+        method: "POST",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
   });

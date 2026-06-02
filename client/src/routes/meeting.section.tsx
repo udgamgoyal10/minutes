@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { Sparkles, Check, Loader2 } from "lucide-react";
+import { Sparkles, Check, Loader2, RotateCcw } from "lucide-react";
 import {
   useMeeting,
   useSections,
@@ -8,10 +8,12 @@ import {
   useProviders,
   useUpdateSection,
   useGenerateSection,
+  useRevertSection,
   type SectionDraft,
   type ProviderInfo,
 } from "../lib/api.ts";
 import { StepNav } from "../components/StepNav.tsx";
+import { SectionSourcePanel } from "../components/SectionSourcePanel.tsx";
 
 export function SectionPage() {
   const params = useParams({ strict: false });
@@ -21,10 +23,11 @@ export function SectionPage() {
 
   const meetingQ = useMeeting(meetingId);
   const sectionsQ = useSections(meetingId);
-  const sourcesQ = useSources(meetingId);
+  const sourcesQ = useSources(meetingId, sectionKey);
   const providersQ = useProviders();
   const update = useUpdateSection(meetingId);
   const gen = useGenerateSection(meetingId);
+  const revert = useRevertSection(meetingId);
 
   const sections = sectionsQ.data?.sections ?? [];
   const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
@@ -112,18 +115,8 @@ export function SectionPage() {
               </select>
             </div>
             <div className="mt-3">
-              <p className="text-xs text-slate-600 mb-1">Required sources</p>
-              {section.required_sources.length > 0 ? (
-                <ul className="grid grid-cols-2 gap-1">
-                  {section.required_sources.map((source) => (
-                    <li key={source} className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">
-                      {source}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-slate-400">No specific source detected for this section.</p>
-              )}
+              <p className="text-xs text-slate-600 mb-2">Sources for this section</p>
+              <SectionSourcePanel meetingId={meetingId} section={section} />
             </div>
           </div>
 
@@ -139,8 +132,9 @@ export function SectionPage() {
               <Sparkles className="size-4 text-brand-600" /> Revise with AI
             </p>
             {section.mode === "template" && (
-              <p className="text-xs text-amber-700">
-                This section is set to match the template wording. Switch to AI update allowed if you want generated rewriting.
+              <p className="text-xs text-slate-500">
+                Template mode: AI keeps the template wording exact and only fills <span className="font-mono">&lt;placeholders&gt;</span> using uploaded sources.
+                Switch to "AI update allowed" if you want the AI to rewrite the section.
               </p>
             )}
             <textarea
@@ -182,7 +176,7 @@ export function SectionPage() {
                 ))}
               </select>
               <button
-                disabled={!provider || gen.isPending || section.mode === "template"}
+                disabled={!provider || gen.isPending}
                 onClick={async () => {
                   const result = await gen.mutateAsync({
                     key: section.section_key,
@@ -204,14 +198,28 @@ export function SectionPage() {
             </p>
           </div>
 
-          <div className="mt-6 flex justify-between">
-            <button
-              onClick={() => update.mutate({ key: section.section_key, content_md: content })}
-              disabled={update.isPending}
-              className="text-sm text-slate-700 underline"
-            >
-              Save draft
-            </button>
+          <div className="mt-6 flex justify-between items-center">
+            <div className="flex gap-3 items-center">
+              <button
+                onClick={() => update.mutate({ key: section.section_key, content_md: content })}
+                disabled={update.isPending}
+                className="text-sm text-slate-700 underline"
+              >
+                Save draft
+              </button>
+              <button
+                onClick={async () => {
+                  const result = await revert.mutateAsync(section.section_key);
+                  if (result.section?.content_md != null) setContent(result.section.content_md);
+                }}
+                disabled={revert.isPending || !section.template_body_text}
+                className="text-sm text-slate-600 hover:text-rose-600 flex items-center gap-1 disabled:opacity-50"
+                title="Replace current text with the original template wording"
+              >
+                <RotateCcw className="size-3.5" />
+                Revert to template
+              </button>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={async () => {

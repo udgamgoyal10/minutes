@@ -11,6 +11,8 @@ export type PromptContext = {
   previousMeetingDate: string;
   variables: Record<string, string>;
   section: ParsedSection;
+  templateBodyText?: string;
+  mode?: "template" | "ai";
   sources: Array<{ label: string; kind: string; text: string }>;
 };
 
@@ -62,9 +64,40 @@ function placeholderBlock(ctx: PromptContext): string {
   return `Placeholders to fill (leave as-is if no data):\n${lines}`;
 }
 
+function dateWindowBlock(ctx: PromptContext): string {
+  if (!ctx.meetingDate && !ctx.previousMeetingDate) return "";
+  return (
+    `Date window: only consider source data dated AFTER ${ctx.previousMeetingDate || "(start of history)"} ` +
+    `and ON or BEFORE ${ctx.meetingDate || "(this meeting date)"}. ` +
+    "Ignore rows, entries, or events outside that window.\n\n"
+  );
+}
+
 export function buildPrompt(ctx: PromptContext): { system: string; prompt: string } {
+  const templateBody = ctx.templateBodyText || ctx.section.bodyText;
+  const isTemplateFill = ctx.mode === "template" && ctx.sources.length > 0 && /<[^<>\n]{2,200}>/.test(templateBody);
   const custom = CUSTOM[ctx.section.key];
-  if (custom) return { system: SYSTEM_BASE, prompt: STYLE_GUIDE + custom(ctx) };
+
+  if (isTemplateFill) {
+    const fill =
+      `Organization: ${ctx.organizationName}\n` +
+      `Meeting: ${ctx.meetingTitle}\n` +
+      `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
+      `Section title: ${ctx.section.title}\n\n` +
+      STYLE_GUIDE +
+      dateWindowBlock(ctx) +
+      "Template wording for this section (KEEP every word and line break exactly, only replace the <placeholder> tokens):\n" +
+      `"""\n${templateBody}\n"""\n\n` +
+      sourcesBlock(ctx) +
+      placeholderBlock(ctx) +
+      "\n\nReplace each <placeholder> with concise AI-summarized content drawn ONLY from the sources within the date window. " +
+      "If a placeholder cannot be filled from the sources, leave the <placeholder> token intact. " +
+      "Do NOT rewrite, reorder, paraphrase, or remove any other template wording. " +
+      "Return the filled section body only.";
+    return { system: SYSTEM_BASE, prompt: fill };
+  }
+
+  if (custom) return { system: SYSTEM_BASE, prompt: STYLE_GUIDE + dateWindowBlock(ctx) + custom(ctx) };
 
   const generic =
     `Organization: ${ctx.organizationName}\n` +
@@ -72,8 +105,9 @@ export function buildPrompt(ctx: PromptContext): { system: string; prompt: strin
     `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
     `Section title: ${ctx.section.title}\n\n` +
     STYLE_GUIDE +
+    dateWindowBlock(ctx) +
     "Template boilerplate for this section (use as reference; if blank, draft from scratch using the additional instruction and sources):\n" +
-    `"""\n${ctx.section.bodyText || "(blank custom section)"}\n"""\n\n` +
+    `"""\n${templateBody || "(blank custom section)"}\n"""\n\n` +
     sourcesBlock(ctx) +
     placeholderBlock(ctx) +
     "\n\nReturn the rewritten section body only (no heading, no preamble).";

@@ -17,6 +17,7 @@ type SectionRow = {
   ordinal: number;
   title: string;
   content_md: string;
+  template_body_text: string;
   status: string;
   mode: string;
   required_sources_json: string;
@@ -68,6 +69,7 @@ function rowToSection(row: SectionRow, variables?: Record<string, string>) {
     ordinal: row.ordinal,
     title: row.title,
     content_md: row.content_md,
+    template_body_text: row.template_body_text ?? "",
     preview_md: variables ? fillTemplateText(row.content_md, variables) : row.content_md,
     status: row.status,
     mode: row.mode === "ai" ? "ai" : "template",
@@ -223,6 +225,31 @@ r.delete("/meetings/:id/sections/:key", (c) => {
   return c.json({ ok: true });
 });
 
+r.post("/meetings/:id/sections/:key/revert", (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  const key = c.req.param("key");
+  const m = loadMeetingCtx(id, user.id);
+  if (!m) return c.json({ error: "not found" }, 404);
+  const draft = db.query<SectionRow, [number, string]>(
+    "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
+  ).get(id, key);
+  if (!draft) return c.json({ error: "section not found" }, 404);
+  const fallback = draft.template_body_text || draft.content_md;
+  db.run(
+    `UPDATE section_drafts
+     SET content_md = ?, status = 'pending', mode = 'template',
+         last_ai_provider = NULL, last_ai_model = NULL,
+         updated_at = datetime('now')
+     WHERE meeting_id = ? AND section_key = ?`,
+    [fallback, id, key],
+  );
+  const row = db.query<SectionRow, [number, string]>(
+    "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
+  ).get(id, key);
+  return c.json({ section: row ? rowToSection(row, variablesForMeeting(m)) : null });
+});
+
 r.post("/meetings/:id/sections/:key/generate", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
@@ -253,19 +280,22 @@ r.post("/meetings/:id/sections/:key/generate", async (c) => {
     placeholders: [],
   };
 
-  // Pull sources
-  let sourceRows: Array<{ id: number; kind: string; label: string | null; extracted_text: string | null }>;
+  // Pull sources scoped to this section's required source labels
+  const requiredLabels = parseSourcesJson(draft.required_sources_json);
+  let sourceRows: Array<{ id: number; kind: string; label: string | null; extracted_text: string | null }> = [];
   if (body.source_ids && body.source_ids.length) {
     const placeholders = body.source_ids.map(() => "?").join(",");
     sourceRows = db.query<typeof sourceRows[number], number[]>(
       `SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ? AND id IN (${placeholders})`,
     ).all(id, ...body.source_ids) as typeof sourceRows;
-  } else {
-    sourceRows = db.query<typeof sourceRows[number], [number]>(
-      "SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ?",
-    ).all(id) as typeof sourceRows;
+  } else if (requiredLabels.length) {
+    const placeholders = requiredLabels.map(() => "?").join(",");
+    sourceRows = db.query<typeof sourceRows[number], (number | string)[]>(
+      `SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ? AND label IN (${placeholders})`,
+    ).all(id, ...requiredLabels) as typeof sourceRows;
   }
 
+  const sectionMode: "template" | "ai" = draft.mode === "ai" ? "ai" : "template";
   const ctx: PromptContext = {
     organizationName: m.org_name,
     meetingTitle: m.label,
@@ -273,6 +303,8 @@ r.post("/meetings/:id/sections/:key/generate", async (c) => {
     previousMeetingDate: m.previous_meeting_date ?? "",
     variables: variablesForMeeting(m),
     section,
+    templateBodyText: draft.template_body_text || section.bodyText,
+    mode: sectionMode,
     sources: sourceRows.map((s) => ({
       label: s.label ?? "",
       kind: s.kind,

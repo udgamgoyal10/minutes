@@ -32,6 +32,28 @@ r.get("/meetings/:id/sources", (c) => {
   const user = c.get("user");
   const meetingId = Number(c.req.param("id"));
   if (!ensureOwnedMeeting(meetingId, user.id)) return c.json({ error: "not found" }, 404);
+  const sectionKey = c.req.query("section_key");
+  if (sectionKey) {
+    const draft = db.query<{ required_sources_json: string }, [number, string]>(
+      "SELECT required_sources_json FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
+    ).get(meetingId, sectionKey);
+    const labels: string[] = draft
+      ? (() => {
+          try {
+            const parsed = JSON.parse(draft.required_sources_json) as unknown;
+            return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+    if (!labels.length) return c.json({ sources: [] });
+    const placeholders = labels.map(() => "?").join(",");
+    const rows = db.query<SourceRow, (number | string)[]>(
+      `SELECT * FROM sources WHERE meeting_id = ? AND label IN (${placeholders}) ORDER BY id ASC`,
+    ).all(meetingId, ...labels);
+    return c.json({ sources: rows });
+  }
   const rows = db.query<SourceRow, [number]>(
     "SELECT * FROM sources WHERE meeting_id = ? ORDER BY id ASC",
   ).all(meetingId);

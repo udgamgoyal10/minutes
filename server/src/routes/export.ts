@@ -30,7 +30,7 @@ function loadCtx(meetingId: number, userId: number): Ctx | null {
 
 async function buildDocx(meetingId: number, ctx: Ctx): Promise<Uint8Array> {
   const rows = db.query<ApprovedSection, [number]>(
-    "SELECT section_key as key, ordinal, content_md FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
+    "SELECT section_key as key, ordinal, content_md, template_body_text FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
   ).all(meetingId);
   const parsed = JSON.parse(ctx.parsed_json) as ParsedTemplate;
   return renderDocx({

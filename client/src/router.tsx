@@ -10,7 +10,6 @@ import { LoginPage } from "./routes/login.tsx";
 import { MeetingsListPage } from "./routes/meetings.tsx";
 import { NewMeetingPage } from "./routes/meetings.new.tsx";
 import { SetupPage } from "./routes/meeting.setup.tsx";
-import { SourcesPage } from "./routes/meeting.sources.tsx";
 import { SectionsPage } from "./routes/meeting.sections.tsx";
 import { SectionPage } from "./routes/meeting.section.tsx";
 import { ExportPage } from "./routes/meeting.export.tsx";
@@ -57,12 +56,6 @@ const setupRoute = createRoute({
   component: SetupPage,
 });
 
-const sourcesRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/m/$id/sources",
-  component: SourcesPage,
-});
-
 const sectionsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/m/$id/sections",
@@ -83,7 +76,7 @@ const exportRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sourcesRoute, sectionsRoute, sectionRoute, exportRoute]),
+  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sectionsRoute, sectionRoute, exportRoute]),
 ]);
 
 export const router = createRouter({ routeTree });

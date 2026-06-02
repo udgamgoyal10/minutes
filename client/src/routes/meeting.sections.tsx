@@ -37,7 +37,7 @@ export function SectionsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sections</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Sections are loaded in template/header order by default. Reorder, remove, add, or choose exact-template vs AI-updated wording after uploading sources.
+            Sections load in template order. Reorder, remove, or add custom sections. Open a section to upload its sources, choose template vs AI wording, and generate or revert.
           </p>
         </div>
         <button

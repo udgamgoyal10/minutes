@@ -12,7 +12,12 @@ import { readFile } from "node:fs/promises";
 import type { ParsedTemplate } from "./template-parser.ts";
 import { canonicalToken } from "./template-variables.ts";
 
-export type ApprovedSection = { key: string; ordinal: number; content_md: string };
+export type ApprovedSection = {
+  key: string;
+  ordinal: number;
+  content_md: string;
+  template_body_text?: string;
+};
 
 export async function renderDocx(args: {
   templatePath: string;
@@ -35,6 +40,12 @@ export async function renderDocx(args: {
     const newSec = byKey.get(sec.key);
     if (!newSec) continue;
     if (!sec.bodyXml) continue;
+    // If the section content is unchanged from the original template body,
+    // keep the original XML so template formatting (bold headings, lists,
+    // fonts) is preserved exactly.
+    const unchanged =
+      newSec.content_md.trim() === (newSec.template_body_text ?? sec.bodyText).trim();
+    if (unchanged) continue;
     const rendered = markdownToWordXml(newSec.content_md);
     if (xml.includes(sec.bodyXml)) {
       xml = xml.replace(sec.bodyXml, rendered);
@@ -127,12 +138,10 @@ function runsFromInline(text: string): string {
     i += 1;
   }
   push();
+  const baseFont = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>';
   return runs
     .map((r) => {
-      const rpr =
-        r.bold || r.italic
-          ? `<w:rPr>${r.bold ? "<w:b/>" : ""}${r.italic ? "<w:i/>" : ""}</w:rPr>`
-          : "";
+      const rpr = `<w:rPr>${baseFont}${r.bold ? "<w:b/>" : ""}${r.italic ? "<w:i/>" : ""}</w:rPr>`;
       return `<w:r>${rpr}<w:t xml:space="preserve">${xmlEscape(r.text)}</w:t></w:r>`;
     })
     .join("");

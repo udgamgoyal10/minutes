@@ -563,6 +563,35 @@ const migrations: Migration[] = [
       tx();
     },
   },
+  {
+    id: 10,
+    name: "section_template_body_text",
+    up: () => {
+      db.exec("ALTER TABLE section_drafts ADD COLUMN template_body_text TEXT NOT NULL DEFAULT '';");
+      const rows = db.query<{
+        id: number;
+        section_key: string;
+        content_md: string;
+        parsed_json: string;
+      }, []>(
+        `SELECT s.id, s.section_key, s.content_md, t.parsed_json
+         FROM section_drafts s
+         JOIN meetings m ON m.id = s.meeting_id
+         JOIN meeting_templates t ON t.id = m.template_id`,
+      ).all();
+      const update = db.prepare(
+        "UPDATE section_drafts SET template_body_text = ? WHERE id = ?",
+      );
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
+          const section = parsed.sections.find((s) => s.key === row.section_key);
+          update.run(section?.bodyText ?? row.content_md, row.id);
+        }
+      });
+      tx();
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

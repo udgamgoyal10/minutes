@@ -1,11 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 
-export type StepKey = "setup" | "sources" | "section" | "export";
+export type StepKey = "setup" | "section" | "export";
 
 const STEPS: Array<{ key: StepKey; label: string; pathSuffix: (id: number) => string }> = [
   { key: "setup", label: "Setup", pathSuffix: (id) => `/m/${id}/setup` },
-  { key: "sources", label: "Sources", pathSuffix: (id) => `/m/${id}/sources` },
   { key: "section", label: "Sections", pathSuffix: (id) => `/m/${id}/sections` },
   { key: "export", label: "Export", pathSuffix: (id) => `/m/${id}/export` },
 ];
