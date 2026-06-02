@@ -10,6 +10,7 @@
 import JSZip from "jszip";
 import { readFile } from "node:fs/promises";
 import type { ParsedTemplate } from "./template-parser.ts";
+import { canonicalToken } from "./template-variables.ts";
 
 export type ApprovedSection = { key: string; ordinal: number; content_md: string };
 
@@ -53,13 +54,12 @@ function xmlEscape(s: string): string {
 }
 
 function replacePlaceholders(xml: string, vars: Record<string, string>): string {
-  // Build a quick lookup keyed by both the raw token and a normalized form.
   const lookup = new Map<string, string>();
   for (const [k, v] of Object.entries(vars)) {
-    lookup.set(k.trim().toLowerCase(), v);
+    lookup.set(canonicalToken(k), v);
   }
   return xml.replace(/&lt;([^<>&\n]{2,200}?)&gt;/g, (full, raw: string) => {
-    const key = raw.trim().toLowerCase();
+    const key = canonicalToken(raw);
     const v = lookup.get(key);
     return v != null && v !== "" ? xmlEscape(v) : full;
   });

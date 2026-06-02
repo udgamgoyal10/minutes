@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import { renderDocx, type ApprovedSection } from "../services/docx-render.ts";
 import { renderPdfFromDocx } from "../services/pdf-render.ts";
 import type { ParsedTemplate } from "../services/template-parser.ts";
+import { buildTemplateVariables, fillTemplateText } from "../services/template-variables.ts";
 
 const r = new Hono();
 r.use("*", requireAuth);
@@ -11,6 +12,8 @@ r.use("*", requireAuth);
 type Ctx = {
   id: number;
   variables_json: string;
+  meeting_date: string | null;
+  previous_meeting_date: string | null;
   label: string;
   docx_path: string;
   parsed_json: string;
@@ -18,7 +21,7 @@ type Ctx = {
 
 function loadCtx(meetingId: number, userId: number): Ctx | null {
   return db.query<Ctx, [number, number]>(
-    `SELECT m.id, m.variables_json, m.label, t.docx_path, t.parsed_json
+    `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.label, t.docx_path, t.parsed_json
      FROM meetings m
      JOIN meeting_templates t ON t.id = m.template_id
      WHERE m.id = ? AND m.user_id = ?`,
@@ -33,7 +36,11 @@ async function buildDocx(meetingId: number, ctx: Ctx): Promise<Uint8Array> {
   return renderDocx({
     templatePath: ctx.docx_path,
     parsed,
-    variables: JSON.parse(ctx.variables_json) as Record<string, string>,
+    variables: buildTemplateVariables({
+      variables: JSON.parse(ctx.variables_json) as Record<string, string>,
+      meetingDate: ctx.meeting_date,
+      previousMeetingDate: ctx.previous_meeting_date,
+    }),
     sections: rows,
   });
 }
@@ -75,10 +82,18 @@ r.get("/meetings/:id/preview", async (c) => {
   const sections = db.query<{ section_key: string; ordinal: number; title: string; content_md: string; status: string }, [number]>(
     "SELECT section_key, ordinal, title, content_md, status FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
   ).all(id);
+  const variables = buildTemplateVariables({
+    variables: JSON.parse(ctx.variables_json) as Record<string, string>,
+    meetingDate: ctx.meeting_date,
+    previousMeetingDate: ctx.previous_meeting_date,
+  });
   return c.json({
     label: ctx.label,
-    variables: JSON.parse(ctx.variables_json) as Record<string, string>,
-    sections,
+    variables,
+    sections: sections.map((section) => ({
+      ...section,
+      content_md: fillTemplateText(section.content_md, variables),
+    })),
   });
 });
 

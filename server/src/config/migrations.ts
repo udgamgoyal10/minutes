@@ -1,6 +1,8 @@
 import { db } from "./db.ts";
+import { inferRequiredSources } from "../services/source-recommendations.ts";
+import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
 
-type Migration = { id: number; name: string; up: () => void };
+type Migration = { id: number; name: string; up: () => void | Promise<void> };
 
 const migrations: Migration[] = [
   {
@@ -95,9 +97,392 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: 2,
+    name: "section_workflow_metadata",
+    up: () => {
+      db.exec(`
+        ALTER TABLE section_drafts ADD COLUMN mode TEXT NOT NULL DEFAULT 'template';
+        ALTER TABLE section_drafts ADD COLUMN required_sources_json TEXT NOT NULL DEFAULT '[]';
+      `);
+
+      const rows = db.query<{
+        meeting_id: number;
+        section_key: string;
+        content_md: string;
+        parsed_json: string;
+      }, []>(
+        `SELECT s.meeting_id, s.section_key, s.content_md, t.parsed_json
+         FROM section_drafts s
+         JOIN meetings m ON m.id = s.meeting_id
+         JOIN meeting_templates t ON t.id = m.template_id`,
+      ).all();
+
+      const update = db.prepare(
+        `UPDATE section_drafts
+         SET content_md = CASE WHEN content_md = '' THEN ? ELSE content_md END,
+             required_sources_json = ?
+         WHERE meeting_id = ? AND section_key = ?`,
+      );
+
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
+          const section = parsed.sections.find((s) => s.key === row.section_key);
+          if (!section) continue;
+          update.run(
+            section.bodyText,
+            JSON.stringify(inferRequiredSources(section.title, section.bodyText)),
+            row.meeting_id,
+            row.section_key,
+          );
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 3,
+    name: "refresh_section_source_recommendations",
+    up: () => {
+      const rows = db.query<{
+        meeting_id: number;
+        section_key: string;
+        title: string;
+        content_md: string;
+        parsed_json: string;
+      }, []>(
+        `SELECT s.meeting_id, s.section_key, s.title, s.content_md, t.parsed_json
+         FROM section_drafts s
+         JOIN meetings m ON m.id = s.meeting_id
+         JOIN meeting_templates t ON t.id = m.template_id`,
+      ).all();
+
+      const update = db.prepare(
+        `UPDATE section_drafts
+         SET required_sources_json = ?
+         WHERE meeting_id = ? AND section_key = ?`,
+      );
+
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
+          const section = parsed.sections.find((s) => s.key === row.section_key);
+          const title = section?.title ?? row.title;
+          const bodyText = section?.bodyText ?? row.content_md;
+          update.run(
+            JSON.stringify(inferRequiredSources(title, bodyText)),
+            row.meeting_id,
+            row.section_key,
+          );
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 4,
+    name: "refresh_template_sections_from_docx",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+
+      for (const template of templates) {
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+
+        const existingRows = db.query<{
+          id: number;
+          meeting_id: number;
+          section_key: string;
+          content_md: string;
+          status: string;
+          last_ai_provider: string | null;
+        }, [number]>("SELECT id, meeting_id, section_key, content_md, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC");
+
+        const updateExisting = db.prepare(
+          `UPDATE section_drafts
+           SET ordinal = ?,
+               title = ?,
+               content_md = ?,
+               required_sources_json = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        );
+        const insertMissing = db.prepare(
+          `INSERT INTO section_drafts
+             (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
+           VALUES (?, ?, ?, ?, ?, 'pending', 'template', ?)`,
+        );
+
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = existingRows.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const existing = byKey.get(section.key);
+              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              if (existing) {
+                const canReplaceContent = !existing.content_md ||
+                  existing.content_md === oldSection?.bodyText ||
+                  (existing.status === "pending" && !existing.last_ai_provider);
+                updateExisting.run(
+                  section.ordinal,
+                  section.title,
+                  canReplaceContent ? section.bodyText : existing.content_md,
+                  required,
+                  existing.id,
+                );
+              } else {
+                insertMissing.run(
+                  meeting.id,
+                  section.key,
+                  section.ordinal,
+                  section.title,
+                  section.bodyText,
+                  required,
+                );
+              }
+            }
+          }
+        });
+        tx();
+      }
+    },
+  },
+  {
+    id: 5,
+    name: "tighten_section_source_recommendations",
+    up: () => {
+      const rows = db.query<{
+        meeting_id: number;
+        section_key: string;
+        title: string;
+        content_md: string;
+      }, []>("SELECT meeting_id, section_key, title, content_md FROM section_drafts").all();
+
+      const update = db.prepare(
+        `UPDATE section_drafts
+         SET required_sources_json = ?
+         WHERE meeting_id = ? AND section_key = ?`,
+      );
+
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          update.run(
+            JSON.stringify(inferRequiredSources(row.title, row.content_md)),
+            row.meeting_id,
+            row.section_key,
+          );
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 6,
+    name: "merge_intro_and_refresh_variables",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+
+      for (const template of templates) {
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+
+        const selectSections = db.query<{
+          id: number;
+          section_key: string;
+          content_md: string;
+          status: string;
+          mode: string;
+          last_ai_provider: string | null;
+        }, [number]>(
+          `SELECT id, section_key, content_md, status, mode, last_ai_provider
+           FROM section_drafts
+           WHERE meeting_id = ?
+           ORDER BY ordinal ASC`,
+        );
+        const updateExisting = db.prepare(
+          `UPDATE section_drafts
+           SET ordinal = ?,
+               title = ?,
+               content_md = ?,
+               required_sources_json = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        );
+        const insertMissing = db.prepare(
+          `INSERT INTO section_drafts
+             (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
+           VALUES (?, ?, ?, ?, ?, 'pending', 'template', ?)`,
+        );
+        const deleteObsoleteIntro = db.prepare(
+          `DELETE FROM section_drafts
+           WHERE meeting_id = ?
+             AND section_key IN ('notice-of-the-meeting', 'signing-of-minutes', 'approval-of-proceedings')`,
+        );
+
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = selectSections.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const existing = byKey.get(section.key);
+              const introRows = section.key === "introduction"
+                ? [
+                  byKey.get("notice-of-the-meeting"),
+                  byKey.get("signing-of-minutes"),
+                  byKey.get("approval-of-proceedings"),
+                ].filter((row): row is NonNullable<typeof row> => row != null)
+                : [];
+              const mergedIntroContent = introRows.some((row) => row.status !== "pending" || row.last_ai_provider)
+                ? introRows.map((row) => row.content_md).filter(Boolean).join("\n\n")
+                : section.bodyText;
+              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              if (existing) {
+                const canReplaceContent = !existing.content_md ||
+                  existing.content_md === oldSection?.bodyText ||
+                  (existing.status === "pending" && !existing.last_ai_provider);
+                updateExisting.run(
+                  section.ordinal,
+                  section.title,
+                  canReplaceContent ? mergedIntroContent : existing.content_md,
+                  required,
+                  existing.id,
+                );
+              } else {
+                insertMissing.run(
+                  meeting.id,
+                  section.key,
+                  section.ordinal,
+                  section.title,
+                  mergedIntroContent,
+                  required,
+                );
+              }
+            }
+            deleteObsoleteIntro.run(meeting.id);
+          }
+        });
+        tx();
+      }
+    },
+  },
+  {
+    id: 7,
+    name: "refresh_intro_variables_and_source_map",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+
+      for (const template of templates) {
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+        const selectSections = db.query<{
+          id: number;
+          section_key: string;
+          content_md: string;
+          status: string;
+          last_ai_provider: string | null;
+        }, [number]>(
+          `SELECT id, section_key, content_md, status, last_ai_provider
+           FROM section_drafts
+           WHERE meeting_id = ?
+           ORDER BY ordinal ASC`,
+        );
+        const updateExisting = db.prepare(
+          `UPDATE section_drafts
+           SET ordinal = ?,
+               title = ?,
+               content_md = ?,
+               required_sources_json = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        );
+        const insertMissing = db.prepare(
+          `INSERT INTO section_drafts
+             (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
+           VALUES (?, ?, ?, ?, ?, 'pending', 'template', ?)`,
+        );
+
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = selectSections.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const existing = byKey.get(section.key);
+              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              if (existing) {
+                const canReplaceContent = !existing.content_md ||
+                  existing.content_md === oldSection?.bodyText ||
+                  (existing.status === "pending" && !existing.last_ai_provider);
+                updateExisting.run(
+                  section.ordinal,
+                  section.title,
+                  canReplaceContent ? section.bodyText : existing.content_md,
+                  required,
+                  existing.id,
+                );
+              } else {
+                insertMissing.run(
+                  meeting.id,
+                  section.key,
+                  section.ordinal,
+                  section.title,
+                  section.bodyText,
+                  required,
+                );
+              }
+            }
+          }
+        });
+        tx();
+      }
+    },
+  },
 ];
 
-export function runMigrations(): void {
+export async function runMigrations(): Promise<void> {
   db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -110,11 +495,8 @@ export function runMigrations(): void {
 
   for (const m of migrations) {
     if (applied.has(m.id)) continue;
-    const tx = db.transaction(() => {
-      m.up();
-      db.run("INSERT INTO _migrations (id, name) VALUES (?, ?)", [m.id, m.name]);
-    });
-    tx();
+    await m.up();
+    db.run("INSERT INTO _migrations (id, name) VALUES (?, ?)", [m.id, m.name]);
     console.log(`[migrations] applied ${m.id} ${m.name}`);
   }
 }

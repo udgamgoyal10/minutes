@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../config/db.ts";
 import { requireAuth } from "../middleware/auth.ts";
+import { inferRequiredSources } from "../services/source-recommendations.ts";
 import type { ParsedTemplate } from "../services/template-parser.ts";
 
 const r = new Hono();
@@ -78,11 +79,20 @@ r.post("/meetings", async (c) => {
   // Seed empty section_drafts so the UI has rows to render
   const parsed = JSON.parse(tpl.parsed_json) as ParsedTemplate;
   const insertSec = db.prepare(
-    `INSERT INTO section_drafts (meeting_id, section_key, ordinal, title, content_md, status)
-     VALUES (?, ?, ?, ?, '', 'pending')`,
+    `INSERT INTO section_drafts (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
+     VALUES (?, ?, ?, ?, ?, 'pending', 'template', ?)`,
   );
   const tx = db.transaction(() => {
-    for (const s of parsed.sections) insertSec.run(meetingId, s.key, s.ordinal, s.title);
+    for (const s of parsed.sections) {
+      insertSec.run(
+        meetingId,
+        s.key,
+        s.ordinal,
+        s.title,
+        s.bodyText,
+        JSON.stringify(inferRequiredSources(s.title, s.bodyText)),
+      );
+    }
   });
   tx();
 

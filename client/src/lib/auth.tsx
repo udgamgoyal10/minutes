@@ -78,3 +78,7 @@ export function useAuth(): AuthState {
 export function getAccessTokenFromStorage(): string | null {
   return loadPersisted()?.accessToken ?? null;
 }
+
+export function clearPersistedAuth(): void {
+  localStorage.removeItem(STORAGE_KEY);
+}

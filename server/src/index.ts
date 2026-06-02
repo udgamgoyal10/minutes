@@ -11,7 +11,7 @@ import sectionsRoutes from "./routes/sections.ts";
 import aiRoutes from "./routes/ai.ts";
 import exportRoutes from "./routes/export.ts";
 
-runMigrations();
+await runMigrations();
 await runSeeders();
 
 const app = new Hono();

@@ -8,6 +8,7 @@
 
 import JSZip from "jszip";
 import { readFile } from "node:fs/promises";
+import { canonicalPlaceholder, mergePlaceholders, setupPlaceholders, slugifyVariable } from "./template-variables.ts";
 
 export type Placeholder = { token: string; raw: string };
 
@@ -34,6 +35,8 @@ const RE_TEXT_RUN = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
 const RE_TAB = /<w:tab\b[^/]*\/>/g;
 const RE_BR = /<w:br\b[^/]*\/>/g;
 const RE_ANGLE_TOKEN = /<([^<>\n]{2,200}?)>/g; // matches <…> tokens used as placeholders in the template
+const RE_NUM_PR = /<w:numPr\b/;
+const RE_BOLD = /<w:b(?:\s[^>]*)?\/>/;
 
 function decodeXmlEntities(s: string): string {
   return s
@@ -64,30 +67,57 @@ function headingLevel(paragraphXml: string): number | null {
   return hm ? Number(hm[1]) : null;
 }
 
+function isNumbered(paragraphXml: string): boolean {
+  return RE_NUM_PR.test(paragraphXml);
+}
+
+function isBold(paragraphXml: string): boolean {
+  return RE_BOLD.test(paragraphXml);
+}
+
+function templateHeadingTitle(paragraphXml: string): string | null {
+  const title = paragraphText(paragraphXml).trim();
+  if (!title) return null;
+  const lvl = headingLevel(paragraphXml);
+  if (lvl !== null && lvl >= 1) return title;
+  if (title.startsWith("<")) return null;
+  if (isNumbered(paragraphXml) && isBold(paragraphXml) && title.length <= 140) return title;
+  if (/^(approval of proceedings|vote of thanks)$/i.test(title) && isBold(paragraphXml)) return title;
+  return null;
+}
+
 function extractPlaceholders(text: string): Placeholder[] {
-  const out = new Map<string, Placeholder>();
+  const out: Placeholder[] = [];
   let m: RegExpExecArray | null;
   RE_ANGLE_TOKEN.lastIndex = 0;
   while ((m = RE_ANGLE_TOKEN.exec(text))) {
     const raw = m[1] ?? "";
-    const trimmed = raw.trim();
-    // Skip obviously non-placeholder fragments (XML-y stuff, single chars)
-    if (!trimmed || trimmed.length < 2) continue;
-    if (/^[/!?]/.test(trimmed)) continue; // </…> or <!--
-    if (/^[A-Z][A-Za-z0-9]*\s*[/=]/.test(trimmed)) continue;
-    const token = slugify(trimmed);
-    if (!out.has(token)) out.set(token, { token, raw: trimmed });
+    const placeholder = canonicalPlaceholder(raw);
+    if (placeholder) out.push(placeholder);
   }
-  return [...out.values()];
+  return mergePlaceholders(out);
 }
 
 function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/&[a-z]+;/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+  return slugifyVariable(s);
+}
+
+function removeIntroMeetingDateLines(lines: string[]): string[] {
+  const out = [...lines];
+  const start = out.findIndex((line) => /^meeting\s+dates\s*:?\s*$/i.test(line.trim()));
+  if (start < 0) return out;
+  let end = start + 1;
+  while (end < out.length) {
+    const line = out[end]!.trim();
+    if (!line) {
+      end += 1;
+      continue;
+    }
+    if (/^minutes\s+of\s+the\s+meeting\b/i.test(line)) break;
+    end += 1;
+  }
+  out.splice(start, end - start);
+  return out;
 }
 
 export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
@@ -110,7 +140,6 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
 
   type SectionAcc = {
     title: string;
-    headingLevel: number;
     paraIndexStart: number;
     paraIndexEnd: number; // exclusive
   };
@@ -118,32 +147,46 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
   let preambleEnd = paragraphs.length; // until set
 
   paragraphs.forEach((p, i) => {
-    const lvl = headingLevel(p);
-    if (lvl !== null && lvl >= 1) {
-      const title = paragraphText(p).trim();
-      if (!title) return;
-      if (acc.length === 0) preambleEnd = i;
-      acc.push({ title, headingLevel: lvl, paraIndexStart: i, paraIndexEnd: paragraphs.length });
-      if (acc.length > 1) acc[acc.length - 2]!.paraIndexEnd = i;
-    }
+    const title = templateHeadingTitle(p);
+    if (!title) return;
+    if (acc.length === 0) preambleEnd = i;
+    acc.push({ title, paraIndexStart: i, paraIndexEnd: paragraphs.length });
+    if (acc.length > 1) acc[acc.length - 2]!.paraIndexEnd = i;
   });
 
   const preambleXml = paragraphs.slice(0, preambleEnd).join("");
   const preambleText = paragraphs.slice(0, preambleEnd).map(paragraphText).join("\n").trim();
 
-  const sections: ParsedSection[] = acc.map((s, idx) => {
-    // body excludes the heading paragraph itself
+  const introEnd = acc.findIndex((s) => /^approval of proceedings$/i.test(s.title));
+  const regularAcc = introEnd >= 0 ? acc.slice(introEnd + 1) : acc;
+  const sections: ParsedSection[] = [];
+
+  if (introEnd >= 0) {
+    const introParas = paragraphs.slice(0, acc[introEnd]!.paraIndexEnd);
+    const bodyXml = introParas.join("");
+    const bodyText = removeIntroMeetingDateLines(introParas.map(paragraphText)).join("\n").trim();
+    sections.push({
+      key: "introduction",
+      ordinal: 1,
+      title: "Introduction",
+      bodyText,
+      bodyXml,
+      placeholders: extractPlaceholders(bodyText),
+    });
+  }
+
+  regularAcc.forEach((s, idx) => {
     const bodyParas = paragraphs.slice(s.paraIndexStart + 1, s.paraIndexEnd);
     const bodyXml = bodyParas.join("");
     const bodyText = bodyParas.map(paragraphText).join("\n").trim();
-    return {
+    sections.push({
       key: slugify(s.title) || `section-${idx + 1}`,
-      ordinal: idx + 1,
+      ordinal: sections.length + 1,
       title: s.title,
       bodyText,
       bodyXml,
       placeholders: extractPlaceholders(`${s.title}\n${bodyText}`),
-    };
+    });
   });
 
   // Dedupe section keys
@@ -160,7 +203,10 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
     title,
     preambleText,
     preambleXml,
-    globalPlaceholders: extractPlaceholders(preambleText),
+    globalPlaceholders: setupPlaceholders(
+      extractPlaceholders(preambleText),
+      sections.flatMap((s) => s.placeholders),
+    ),
     sections,
   };
 }

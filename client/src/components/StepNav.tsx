@@ -5,29 +5,24 @@ export type StepKey = "setup" | "sources" | "section" | "export";
 
 const STEPS: Array<{ key: StepKey; label: string; pathSuffix: (id: number) => string }> = [
   { key: "setup", label: "Setup", pathSuffix: (id) => `/m/${id}/setup` },
+  { key: "section", label: "Sections", pathSuffix: (id) => `/m/${id}/sections` },
   { key: "sources", label: "Sources", pathSuffix: (id) => `/m/${id}/sources` },
-  { key: "section", label: "Sections", pathSuffix: (id) => `/m/${id}/section/_first` },
   { key: "export", label: "Export", pathSuffix: (id) => `/m/${id}/export` },
 ];
 
 export function StepNav({
   meetingId,
   current,
-  firstSectionKey,
 }: {
   meetingId: number;
   current: StepKey;
-  firstSectionKey?: string;
 }) {
   return (
     <ol className="flex items-center gap-3 text-sm mb-8">
       {STEPS.map((s, i) => {
         const isCurrent = s.key === current;
         const done = STEPS.findIndex((x) => x.key === current) > i;
-        const href =
-          s.key === "section" && firstSectionKey
-            ? `/m/${meetingId}/section/${firstSectionKey}`
-            : s.pathSuffix(meetingId);
+        const href = s.pathSuffix(meetingId);
         return (
           <li key={s.key} className="flex items-center gap-2">
             <Link

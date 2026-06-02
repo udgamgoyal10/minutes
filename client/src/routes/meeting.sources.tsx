@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { AlertTriangle, Trash2, Upload, FileText } from "lucide-react";
 import {
@@ -23,11 +23,14 @@ export function SourcesPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [showDisclaimer, setShowDisclaimer] = useState(true);
 
-  const firstSection = sectionsQ.data?.sections[0]?.section_key;
+  const recommendedSources = useMemo(
+    () => [...new Set((sectionsQ.data?.sections ?? []).flatMap((s) => s.required_sources))],
+    [sectionsQ.data?.sections],
+  );
 
   return (
     <div>
-      <StepNav meetingId={meetingId} current="sources" firstSectionKey={firstSection} />
+      <StepNav meetingId={meetingId} current="sources" />
       <h1 className="text-2xl font-semibold mb-4">Sources</h1>
 
       {showDisclaimer && (
@@ -50,6 +53,28 @@ export function SourcesPage() {
           </button>
         </div>
       )}
+
+      <div className="bg-white border border-slate-200 rounded-lg p-4 mb-6">
+        <h2 className="font-medium mb-2">Recommended sources based on selected sections</h2>
+        {recommendedSources.length > 0 ? (
+          <div className="grid grid-cols-2 gap-2">
+            {recommendedSources.map((source) => (
+              <button
+                key={source}
+                type="button"
+                onClick={() => setLabel(source)}
+                className="text-left text-xs bg-slate-50 hover:bg-brand-50 border border-slate-200 hover:border-brand-200 rounded px-3 py-2 text-slate-700"
+              >
+                {source}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">
+            No specific source recommendation was detected from the current sections.
+          </p>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-lg p-4">
@@ -147,20 +172,18 @@ export function SourcesPage() {
         ))}
       </ul>
 
-      <div className="mt-8 flex justify-end">
+      <div className="mt-8 flex justify-end gap-2">
         <button
-          onClick={() => {
-            if (firstSection) {
-              navigate({
-                to: "/m/$id/section/$key",
-                params: { id: String(meetingId), key: firstSection },
-              });
-            }
-          }}
-          disabled={!firstSection}
+          onClick={() => navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } })}
+          className="border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md px-4 py-2 text-sm font-medium"
+        >
+          Back to sections
+        </button>
+        <button
+          onClick={() => navigate({ to: "/m/$id/export", params: { id: String(meetingId) } })}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
-          Continue to sections →
+          Continue to export →
         </button>
       </div>
     </div>

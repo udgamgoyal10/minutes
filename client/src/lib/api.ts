@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getAccessTokenFromStorage } from "./auth.tsx";
+import { clearPersistedAuth, getAccessTokenFromStorage } from "./auth.tsx";
 
 // ---- Types (mirror server JSON shapes) ----
 
@@ -68,7 +68,10 @@ export type SectionDraft = {
   ordinal: number;
   title: string;
   content_md: string;
+  preview_md: string;
   status: "pending" | "draft" | "approved";
+  mode: "template" | "ai";
+  required_sources: string[];
   last_ai_provider: string | null;
   last_ai_model: string | null;
   updated_at: string;
@@ -86,6 +89,10 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
+    if (res.status === 401 && (err.error === "invalid token" || err.error === "wrong token type" || err.error === "missing token")) {
+      clearPersistedAuth();
+      if (window.location.pathname !== "/login") window.location.assign("/login");
+    }
     throw new Error(err.error || `${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
@@ -96,7 +103,13 @@ async function apiBlob(path: string): Promise<Blob> {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(path, { headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    if (res.status === 401) {
+      clearPersistedAuth();
+      if (window.location.pathname !== "/login") window.location.assign("/login");
+    }
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   return await res.blob();
 }
 
@@ -224,10 +237,58 @@ export function useSections(meetingId: number | null) {
 export function useUpdateSection(meetingId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { key: string; content_md?: string; status?: "pending" | "draft" | "approved" }) =>
+    mutationFn: (vars: {
+      key: string;
+      title?: string;
+      content_md?: string;
+      status?: "pending" | "draft" | "approved";
+      mode?: "template" | "ai";
+      required_sources?: string[];
+    }) =>
       apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections/${vars.key}`, {
         method: "PATCH",
-        body: JSON.stringify({ content_md: vars.content_md, status: vars.status }),
+        body: JSON.stringify({
+          title: vars.title,
+          content_md: vars.content_md,
+          status: vars.status,
+          mode: vars.mode,
+          required_sources: vars.required_sources,
+        }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export function useCreateSection(meetingId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { title: string; mode?: "template" | "ai"; content_md?: string; required_sources?: string[] }) =>
+      apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export function useDeleteSection(meetingId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      apiFetch<{ ok: true }>(`/api/meetings/${meetingId}/sections/${key}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export function useReorderSections(meetingId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sectionKeys: string[]) =>
+      apiFetch<{ sections: SectionDraft[] }>(`/api/meetings/${meetingId}/sections/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ section_keys: sectionKeys }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
   });

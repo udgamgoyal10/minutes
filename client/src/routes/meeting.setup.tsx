@@ -92,7 +92,7 @@ export function SetupPage() {
               ai_provider: provider || undefined,
               ai_model: model || undefined,
             });
-            navigate({ to: "/m/$id/sources", params: { id: String(meetingId) } });
+            navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } });
           }}
           disabled={update.isPending}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"

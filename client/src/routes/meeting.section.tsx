@@ -52,7 +52,7 @@ export function SectionPage() {
 
   return (
     <div>
-      <StepNav meetingId={meetingId} current="section" firstSectionKey={sections[0]?.section_key} />
+      <StepNav meetingId={meetingId} current="section" />
       <div className="grid grid-cols-[16rem_1fr] gap-6">
         <aside className="space-y-1">
           {sections.map((s) => (
@@ -81,6 +81,46 @@ export function SectionPage() {
               : "No AI run yet"}
           </p>
 
+          <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Section mode</p>
+                <p className="text-xs text-slate-500">
+                  {section.mode === "template"
+                    ? "Match the template wording except variables and changed data."
+                    : "AI update is allowed for this section."}
+                </p>
+              </div>
+              <select
+                value={section.mode}
+                onChange={(e) =>
+                  update.mutate({
+                    key: section.section_key,
+                    mode: e.target.value as "template" | "ai",
+                  })
+                }
+                className="border border-slate-300 rounded-md px-2 py-1.5 text-sm"
+              >
+                <option value="template">Match template wording</option>
+                <option value="ai">AI update allowed</option>
+              </select>
+            </div>
+            <div className="mt-3">
+              <p className="text-xs text-slate-600 mb-1">Required sources</p>
+              {section.required_sources.length > 0 ? (
+                <ul className="grid grid-cols-2 gap-1">
+                  {section.required_sources.map((source) => (
+                    <li key={source} className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-400">No specific source detected for this section.</p>
+              )}
+            </div>
+          </div>
+
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -92,6 +132,11 @@ export function SectionPage() {
             <p className="text-sm font-medium flex items-center gap-2">
               <Sparkles className="size-4 text-brand-600" /> Revise with AI
             </p>
+            {section.mode === "template" && (
+              <p className="text-xs text-amber-700">
+                This section is set to match the template wording. Switch to AI update allowed if you want generated rewriting.
+              </p>
+            )}
             <textarea
               value={userPrompt}
               onChange={(e) => setUserPrompt(e.target.value)}
@@ -131,7 +176,7 @@ export function SectionPage() {
                 ))}
               </select>
               <button
-                disabled={!provider || gen.isPending}
+                disabled={!provider || gen.isPending || section.mode === "template"}
                 onClick={async () => {
                   await gen.mutateAsync({
                     key: section.section_key,
@@ -174,13 +219,13 @@ export function SectionPage() {
                       params: { id: String(meetingId), key: next.section_key },
                     });
                   } else {
-                    navigate({ to: "/m/$id/export", params: { id: String(meetingId) } });
+                    navigate({ to: "/m/$id/sources", params: { id: String(meetingId) } });
                   }
                 }}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md px-4 py-2 text-sm font-medium flex items-center gap-1"
               >
                 <Check className="size-4" />
-                {next ? "Approve & next" : "Approve & finish"}
+                {next ? "Approve & next" : "Approve & sources"}
               </button>
             </div>
           </div>
