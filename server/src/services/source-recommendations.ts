@@ -8,6 +8,9 @@ export const SOURCE_CATALOG = [
   "Tally JKC Donations in Kind Voucher Export",
   "Medical Camp Text or Sheet",
   "Tally JKP Expenses > 1L and Tally JKC Expenses > 1L not included in above",
+  "Tally JKP Livestock Expenses Voucher Export",
+  "Tally JKP Agricultural Expenses Voucher Export",
+  "Tally JKP Garden Expenses Voucher Export",
 ] as const;
 
 const SECTION_SOURCE_MAP: Record<string, string[]> = {
@@ -15,6 +18,11 @@ const SECTION_SOURCE_MAP: Record<string, string[]> = {
   "free-distribution-program-for-underprivileged-school-children-and-poor-people": [SOURCE_CATALOG[1]],
   "investment-chart": [SOURCE_CATALOG[2]],
   "progress-report-on-construction-projects": [SOURCE_CATALOG[3]],
+  "maintenance-of-livestock": [SOURCE_CATALOG[9]],
+  "maintenance-of-agricultural-fields": [SOURCE_CATALOG[10]],
+  "maintenance-of-the-agricultural-fields": [SOURCE_CATALOG[10]],
+  "maintenance-of-gardens": [SOURCE_CATALOG[11]],
+  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": [SOURCE_CATALOG[11]],
   "discussions-as-to-the-functioning-of-jagadguru-kripalu-chikitsalaya": [
     SOURCE_CATALOG[4],
     SOURCE_CATALOG[5],

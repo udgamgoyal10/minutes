@@ -37,14 +37,14 @@ export function SectionsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sections</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Sections are loaded in template/header order by default. Reorder, remove, add, or choose exact-template vs AI-updated wording before uploading sources.
+            Sections are loaded in template/header order by default. Reorder, remove, add, or choose exact-template vs AI-updated wording after uploading sources.
           </p>
         </div>
         <button
-          onClick={() => navigate({ to: "/m/$id/sources", params: { id: String(meetingId) } })}
+          onClick={() => navigate({ to: "/m/$id/export", params: { id: String(meetingId) } })}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium"
         >
-          Continue to sources →
+          Continue to export →
         </button>
       </div>
 

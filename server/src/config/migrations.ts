@@ -480,6 +480,38 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: 8,
+    name: "refresh_maintenance_source_recommendations",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+
+      for (const template of templates) {
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+      }
+
+      const rows = db.query<{
+        id: number;
+        title: string;
+        content_md: string;
+      }, []>("SELECT id, title, content_md FROM section_drafts").all();
+      const update = db.prepare("UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?");
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          update.run(JSON.stringify(inferRequiredSources(row.title, row.content_md)), row.id);
+        }
+      });
+      tx();
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

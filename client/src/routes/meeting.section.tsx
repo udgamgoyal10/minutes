@@ -46,6 +46,12 @@ export function SectionPage() {
     if (m?.ai_model) setModel(m.ai_model);
   }, [meetingQ.data]);
 
+  useEffect(() => {
+    const selected = providersQ.data?.providers.find((p) => p.id === provider);
+    if (!selected?.models.length) return;
+    if (!model || !selected.models.includes(model)) setModel(selected.models[0] ?? "");
+  }, [providersQ.data?.providers, provider, model]);
+
   if (!section) {
     return <div className="text-slate-500">Loading section…</div>;
   }
@@ -219,13 +225,13 @@ export function SectionPage() {
                       params: { id: String(meetingId), key: next.section_key },
                     });
                   } else {
-                    navigate({ to: "/m/$id/sources", params: { id: String(meetingId) } });
+                    navigate({ to: "/m/$id/export", params: { id: String(meetingId) } });
                   }
                 }}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md px-4 py-2 text-sm font-medium flex items-center gap-1"
               >
                 <Check className="size-4" />
-                {next ? "Approve & next" : "Approve & sources"}
+                {next ? "Approve & next" : "Approve & export"}
               </button>
             </div>
           </div>

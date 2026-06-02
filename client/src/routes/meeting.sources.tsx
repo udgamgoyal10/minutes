@@ -174,16 +174,16 @@ export function SourcesPage() {
 
       <div className="mt-8 flex justify-end gap-2">
         <button
-          onClick={() => navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } })}
+          onClick={() => navigate({ to: "/m/$id/setup", params: { id: String(meetingId) } })}
           className="border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md px-4 py-2 text-sm font-medium"
         >
-          Back to sections
+          Back to setup
         </button>
         <button
-          onClick={() => navigate({ to: "/m/$id/export", params: { id: String(meetingId) } })}
+          onClick={() => navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } })}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
-          Continue to export →
+          Continue to sections →
         </button>
       </div>
     </div>

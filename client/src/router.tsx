@@ -83,7 +83,7 @@ const exportRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sectionsRoute, sourcesRoute, sectionRoute, exportRoute]),
+  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sourcesRoute, sectionsRoute, sectionRoute, exportRoute]),
 ]);
 
 export const router = createRouter({ routeTree });

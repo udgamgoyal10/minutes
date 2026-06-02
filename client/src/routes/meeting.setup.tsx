@@ -40,6 +40,12 @@ export function SetupPage() {
     if (meeting.ai_model) setModel(meeting.ai_model);
   }, [meeting]);
 
+  useEffect(() => {
+    const selected = providersQ.data?.providers.find((p) => p.id === provider);
+    if (!selected?.models.length) return;
+    if (!model || !selected.models.includes(model)) setModel(selected.models[0] ?? "");
+  }, [providersQ.data?.providers, provider, model]);
+
   const placeholders = template?.parsed.globalPlaceholders ?? [];
 
   return (
@@ -92,7 +98,7 @@ export function SetupPage() {
               ai_provider: provider || undefined,
               ai_model: model || undefined,
             });
-            navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } });
+            navigate({ to: "/m/$id/sources", params: { id: String(meetingId) } });
           }}
           disabled={update.isPending}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"

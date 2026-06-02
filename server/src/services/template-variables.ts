@@ -46,6 +46,7 @@ export function canonicalPlaceholder(raw: string): Placeholder | null {
 export function canonicalToken(raw: string): string {
   const token = slugifyVariable(raw);
   if (token === "trustee-1-aka-managing-trustee") return TRUSTEE_1_TOKEN;
+  if (token === "managing-trustee") return TRUSTEE_1_TOKEN;
   return token;
 }
 
@@ -105,8 +106,12 @@ export function fillTemplateText(text: string, variables: Record<string, string>
 }
 
 function formatDate(value?: string | null): string {
-  const parts = dateParts(value);
-  return parts ? `${parts.day} ${parts.month} ${parts.year}` : value ?? "";
+  if (!value) return "";
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return value;
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${Number(m[3])} ${d.toLocaleString("en-IN", { month: "long", timeZone: "Asia/Kolkata" })} ${m[1]}`;
 }
 
 function dateParts(value?: string | null): { day: string; month: string; year: string } | null {
@@ -116,8 +121,24 @@ function dateParts(value?: string | null): { day: string; month: string; year: s
   const d = new Date(`${value}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return {
-    day: String(Number(m[3])),
+    day: ordinalDay(m[3]),
     month: d.toLocaleString("en-IN", { month: "long", timeZone: "Asia/Kolkata" }),
     year: m[1],
   };
+}
+
+function ordinalDay(day: string): string {
+  const n = Number(day);
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
 }
