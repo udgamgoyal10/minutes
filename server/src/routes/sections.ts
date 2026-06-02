@@ -71,6 +71,9 @@ function rowToSection(row: SectionRow, variables?: Record<string, string>) {
     content_md: row.content_md,
     template_body_text: row.template_body_text ?? "",
     preview_md: variables ? fillTemplateText(row.content_md, variables) : row.content_md,
+    template_preview_md: variables
+      ? fillTemplateText(row.template_body_text ?? "", variables)
+      : (row.template_body_text ?? ""),
     status: row.status,
     mode: row.mode === "ai" ? "ai" : "template",
     required_sources: parseSourcesJson(row.required_sources_json),

@@ -52,7 +52,14 @@ export async function renderDocx(args: {
     }
   }
 
-  // 2) Replace <placeholder> tokens in the resulting xml using variables.
+  // 2) Strip the preamble/meeting-dates cover so the export starts at the
+  //    first section heading. Only safe to remove if it isn't already
+  //    consumed by an "introduction" section that was replaced above.
+  if (parsed.preambleXml && xml.includes(parsed.preambleXml)) {
+    xml = xml.replace(parsed.preambleXml, "");
+  }
+
+  // 3) Replace <placeholder> tokens in the resulting xml using variables.
   xml = replacePlaceholders(xml, variables);
 
   zip.file("word/document.xml", xml);

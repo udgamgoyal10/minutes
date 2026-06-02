@@ -592,6 +592,97 @@ const migrations: Migration[] = [
       tx();
     },
   },
+  {
+    id: 11,
+    name: "refresh_templates_v3",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+
+      for (const template of templates) {
+        if (!existsSync(template.docx_path)) continue;
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+
+        const existingStmt = db.query<{
+          id: number;
+          meeting_id: number;
+          section_key: string;
+          content_md: string;
+          template_body_text: string;
+          status: string;
+          last_ai_provider: string | null;
+        }, [number]>(
+          "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
+        );
+
+        const updateExisting = db.prepare(
+          `UPDATE section_drafts
+           SET ordinal = ?,
+               title = ?,
+               content_md = ?,
+               template_body_text = ?,
+               required_sources_json = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        );
+        const insertMissing = db.prepare(
+          `INSERT INTO section_drafts
+             (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', 'template', ?)`,
+        );
+
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = existingStmt.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const existing = byKey.get(section.key);
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              if (existing) {
+                const canReplaceContent = !existing.content_md ||
+                  existing.content_md === oldSection?.bodyText ||
+                  existing.content_md === existing.template_body_text ||
+                  (existing.status === "pending" && !existing.last_ai_provider);
+                updateExisting.run(
+                  section.ordinal,
+                  section.title,
+                  canReplaceContent ? section.bodyText : existing.content_md,
+                  section.bodyText,
+                  required,
+                  existing.id,
+                );
+              } else {
+                insertMissing.run(
+                  meeting.id,
+                  section.key,
+                  section.ordinal,
+                  section.title,
+                  section.bodyText,
+                  section.bodyText,
+                  required,
+                );
+              }
+            }
+          }
+        });
+        tx();
+      }
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

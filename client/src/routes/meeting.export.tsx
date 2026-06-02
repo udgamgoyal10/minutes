@@ -20,12 +20,6 @@ export function ExportPage() {
         >
           <Download className="size-4" /> Download .docx
         </button>
-        <button
-          onClick={() => downloadExport(meetingId, "pdf")}
-          className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white rounded-md px-4 py-2 text-sm font-medium"
-        >
-          <Download className="size-4" /> Download .pdf
-        </button>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6">

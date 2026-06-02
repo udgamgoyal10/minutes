@@ -5,6 +5,7 @@ import {
   useMeeting,
   useTemplates,
   useProviders,
+  useSections,
   useUpdateMeeting,
   type ProviderInfo,
 } from "../lib/api.ts";
@@ -17,6 +18,7 @@ export function SetupPage() {
   const meetingQ = useMeeting(meetingId);
   const templatesQ = useTemplates();
   const providersQ = useProviders();
+  const sectionsQ = useSections(meetingId);
   const update = useUpdateMeeting(meetingId);
 
   const meeting = meetingQ.data?.meeting;
@@ -48,6 +50,20 @@ export function SetupPage() {
 
   const placeholders = template?.parsed.globalPlaceholders ?? [];
 
+  const usedTokens = useMemo(() => {
+    const used = new Set<string>();
+    const bodies = [
+      template?.parsed.preambleText ?? "",
+      ...(sectionsQ.data?.sections ?? []).map((s) => s.template_body_text ?? ""),
+    ];
+    for (const body of bodies) {
+      for (const m of body.matchAll(/<([^<>\n]{2,200}?)>/g)) {
+        used.add(slugToken(m[1] ?? ""));
+      }
+    }
+    return used;
+  }, [template?.parsed.preambleText, sectionsQ.data?.sections]);
+
   return (
     <div>
       <StepNav meetingId={meetingId} current="setup" />
@@ -67,16 +83,28 @@ export function SetupPage() {
       </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 bg-white border border-slate-200 rounded-lg p-4">
         {placeholders.length === 0 && <p className="text-slate-500 col-span-2">No placeholders detected.</p>}
-        {placeholders.map((p) => (
-          <label key={p.token} className="block">
-            <span className="text-xs text-slate-600">{p.raw}</span>
-            <input
-              value={vars[p.token] ?? ""}
-              onChange={(e) => setVars({ ...vars, [p.token]: e.target.value })}
-              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
-            />
-          </label>
-        ))}
+        {placeholders.map((p) => {
+          const used = usedTokens.has(p.token);
+          return (
+            <label key={p.token} className="block">
+              <span className="text-xs text-slate-600 flex items-center gap-2">
+                {p.raw}
+                {!used && (
+                  <span className="text-[10px] uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">
+                    not used in your sections
+                  </span>
+                )}
+              </span>
+              <input
+                value={vars[p.token] ?? ""}
+                onChange={(e) => setVars({ ...vars, [p.token]: e.target.value })}
+                className={`mt-1 w-full border rounded-md px-3 py-1.5 text-sm ${
+                  used ? "border-slate-300" : "border-slate-200 bg-slate-50 text-slate-500"
+                }`}
+              />
+            </label>
+          );
+        })}
       </div>
 
       <h2 className="text-lg font-medium mt-8 mb-3">AI provider</h2>
@@ -108,6 +136,19 @@ export function SetupPage() {
       </div>
     </div>
   );
+}
+
+function slugToken(raw: string): string {
+  const base = raw
+    .toLowerCase()
+    .replace(/&[a-z]+;/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  if (base === "trustee-1-aka-managing-trustee" || base === "managing-trustee") return "trustee-1";
+  if (base === "day-of-month") return "day";
+  if (base === "year-of-meeting") return "year";
+  return base;
 }
 
 function DateField({

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Trash2, Upload } from "lucide-react";
+import { FileText, Loader2, Trash2, Upload } from "lucide-react";
 import {
   useDeleteSource,
   useSources,
@@ -21,6 +21,7 @@ export function SectionSourcePanel({
   const recommended = section.required_sources;
   const [label, setLabel] = useState(recommended[0] ?? "");
   const [pasted, setPasted] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -69,7 +70,7 @@ export function SectionSourcePanel({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="bg-white border border-slate-200 rounded-md p-3">
+        <div className="bg-white border border-slate-200 rounded-md p-3 flex flex-col">
           <p className="text-xs font-medium flex items-center gap-1 mb-2">
             <Upload className="size-3.5" /> Upload files for "{label}"
           </p>
@@ -78,20 +79,36 @@ export function SectionSourcePanel({
             type="file"
             multiple
             accept=".docx,.xlsx,.csv,.pdf,.txt,.png,.jpg,.jpeg,.webp"
-            className="block w-full text-xs"
+            onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []))}
+            className="hidden"
           />
           <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="w-full text-xs border border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50 text-slate-600 rounded-md py-2 px-3 text-left"
+          >
+            {pendingFiles.length === 0
+              ? "Click to choose files (.docx, .xlsx, .pdf, .txt, .png, …)"
+              : `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} ready: ${pendingFiles
+                  .map((f) => f.name)
+                  .join(", ")}`}
+          </button>
+          <button
             onClick={async () => {
-              const files = fileRef.current?.files;
-              if (!files || files.length === 0 || !label.trim()) return;
-              await upload.mutateAsync({ files, label });
+              if (pendingFiles.length === 0 || !label.trim()) return;
+              await upload.mutateAsync({ files: pendingFiles, label });
+              setPendingFiles([]);
               if (fileRef.current) fileRef.current.value = "";
             }}
-            disabled={upload.isPending || !label.trim()}
-            className="mt-2 w-full bg-brand-600 hover:bg-brand-700 text-white rounded-md py-1 text-xs font-medium disabled:opacity-50"
+            disabled={upload.isPending || !label.trim() || pendingFiles.length === 0}
+            className="mt-2 w-full bg-brand-600 hover:bg-brand-700 text-white rounded-md py-1.5 text-xs font-medium disabled:opacity-50 flex items-center justify-center gap-1"
           >
+            {upload.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
             {upload.isPending ? "Uploading…" : "Upload"}
           </button>
+          {upload.error && (
+            <p className="text-xs text-rose-600 mt-1">{(upload.error as Error).message}</p>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-md p-3">

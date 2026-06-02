@@ -70,6 +70,7 @@ export type SectionDraft = {
   content_md: string;
   template_body_text: string;
   preview_md: string;
+  template_preview_md: string;
   status: "pending" | "draft" | "approved";
   mode: "template" | "ai";
   required_sources: string[];

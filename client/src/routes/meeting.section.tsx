@@ -40,8 +40,8 @@ export function SectionPage() {
   const [model, setModel] = useState("");
 
   useEffect(() => {
-    if (section) setContent(section.content_md);
-  }, [section?.id]);
+    if (section) setContent(section.preview_md || section.content_md);
+  }, [section?.id, section?.preview_md]);
 
   useEffect(() => {
     const m = meetingQ.data?.meeting;
@@ -144,53 +144,44 @@ export function SectionPage() {
               placeholder="Extra instructions (optional). Leave blank to use the generic template prompt."
               className="w-full border border-slate-300 rounded-md p-2 text-sm"
             />
-            <div className="flex gap-2 items-center">
-              <select
-                value={provider}
-                onChange={(e) => {
-                  const p = e.target.value as ProviderInfo["id"];
-                  setProvider(p);
-                  const found = providersQ.data?.providers.find((x) => x.id === p);
-                  if (found) setModel(found.models[0] ?? "");
-                }}
-                className="border border-slate-300 rounded-md px-2 py-1.5 text-sm"
-              >
-                <option value="">provider</option>
-                {(providersQ.data?.providers ?? [])
-                  .filter((p) => p.configured)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.id} ({p.category})
-                    </option>
-                  ))}
-              </select>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="border border-slate-300 rounded-md px-2 py-1.5 text-sm flex-1"
-              >
-                {(providersQ.data?.providers.find((p) => p.id === provider)?.models ?? []).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={!provider || gen.isPending}
-                onClick={async () => {
-                  const result = await gen.mutateAsync({
-                    key: section.section_key,
-                    provider: provider as ProviderInfo["id"],
-                    model,
-                    user_prompt: userPrompt || undefined,
-                  });
-                  if (result.section?.content_md != null) setContent(result.section.content_md);
-                }}
-                className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
-              >
-                {gen.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                Generate
-              </button>
+            <div className="flex gap-2 items-center justify-between">
+              <p className="text-xs text-slate-500">
+                Using <span className="font-medium text-slate-700">{provider || "—"}</span>
+                {model ? <span className="text-slate-500"> / {model}</span> : null}
+                <span className="text-slate-400"> (set in Setup)</span>
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    const result = await revert.mutateAsync(section.section_key);
+                    const next = result.section?.preview_md ?? result.section?.content_md;
+                    if (next != null) setContent(next);
+                  }}
+                  disabled={revert.isPending || !section.template_body_text}
+                  title="Replace current text with the original template wording"
+                  className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                >
+                  {revert.isPending ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                  Revert to template
+                </button>
+                <button
+                  disabled={!provider || gen.isPending}
+                  onClick={async () => {
+                    const result = await gen.mutateAsync({
+                      key: section.section_key,
+                      provider: provider as ProviderInfo["id"],
+                      model,
+                      user_prompt: userPrompt || undefined,
+                    });
+                    const next = result.section?.preview_md ?? result.section?.content_md;
+                    if (next != null) setContent(next);
+                  }}
+                  className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                >
+                  {gen.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  Generate
+                </button>
+              </div>
             </div>
             {gen.error && <p className="text-xs text-rose-600">{(gen.error as Error).message}</p>}
             <p className="text-xs text-slate-500">
@@ -199,27 +190,13 @@ export function SectionPage() {
           </div>
 
           <div className="mt-6 flex justify-between items-center">
-            <div className="flex gap-3 items-center">
-              <button
-                onClick={() => update.mutate({ key: section.section_key, content_md: content })}
-                disabled={update.isPending}
-                className="text-sm text-slate-700 underline"
-              >
-                Save draft
-              </button>
-              <button
-                onClick={async () => {
-                  const result = await revert.mutateAsync(section.section_key);
-                  if (result.section?.content_md != null) setContent(result.section.content_md);
-                }}
-                disabled={revert.isPending || !section.template_body_text}
-                className="text-sm text-slate-600 hover:text-rose-600 flex items-center gap-1 disabled:opacity-50"
-                title="Replace current text with the original template wording"
-              >
-                <RotateCcw className="size-3.5" />
-                Revert to template
-              </button>
-            </div>
+            <button
+              onClick={() => update.mutate({ key: section.section_key, content_md: content })}
+              disabled={update.isPending}
+              className="text-sm text-slate-700 underline"
+            >
+              Save draft
+            </button>
             <div className="flex gap-2">
               <button
                 onClick={async () => {
