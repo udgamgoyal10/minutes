@@ -184,12 +184,13 @@ export function SectionPage() {
               <button
                 disabled={!provider || gen.isPending || section.mode === "template"}
                 onClick={async () => {
-                  await gen.mutateAsync({
+                  const result = await gen.mutateAsync({
                     key: section.section_key,
                     provider: provider as ProviderInfo["id"],
                     model,
                     user_prompt: userPrompt || undefined,
                   });
+                  if (result.section?.content_md != null) setContent(result.section.content_md);
                 }}
                 className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
               >

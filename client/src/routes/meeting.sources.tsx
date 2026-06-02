@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { AlertTriangle, Trash2, Upload, FileText } from "lucide-react";
 import {
@@ -27,6 +27,18 @@ export function SourcesPage() {
     () => [...new Set((sectionsQ.data?.sections ?? []).flatMap((s) => s.required_sources))],
     [sectionsQ.data?.sections],
   );
+  const uploadedCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const source of sourcesQ.data?.sources ?? []) {
+      const key = source.label?.trim();
+      if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [sourcesQ.data?.sources]);
+
+  useEffect(() => {
+    if (!label && recommendedSources.length) setLabel(recommendedSources[0] ?? "");
+  }, [label, recommendedSources]);
 
   return (
     <div>
@@ -65,7 +77,10 @@ export function SourcesPage() {
                 onClick={() => setLabel(source)}
                 className="text-left text-xs bg-slate-50 hover:bg-brand-50 border border-slate-200 hover:border-brand-200 rounded px-3 py-2 text-slate-700"
               >
-                {source}
+                <span>{source}</span>
+                <span className="block text-[10px] text-slate-400 mt-1">
+                  Uploaded: {uploadedCounts.get(source) ?? 0}
+                </span>
               </button>
             ))}
           </div>
@@ -81,12 +96,10 @@ export function SourcesPage() {
           <h2 className="font-medium mb-2 flex items-center gap-2">
             <Upload className="size-4" /> Upload files
           </h2>
-          <input
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Label (optional, e.g. 'Tally FD export')"
-            className="mb-2 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+          <SourceLabelPicker
+            recommendedSources={recommendedSources}
+            label={label}
+            onChange={setLabel}
           />
           <input
             ref={fileRef}
@@ -99,11 +112,11 @@ export function SourcesPage() {
             onClick={async () => {
               const files = fileRef.current?.files;
               if (!files || files.length === 0) return;
+              if (recommendedSources.length && !label.trim()) return;
               await upload.mutateAsync({ files, label });
               if (fileRef.current) fileRef.current.value = "";
-              setLabel("");
             }}
-            disabled={upload.isPending}
+            disabled={upload.isPending || (recommendedSources.length > 0 && !label.trim())}
             className="mt-3 w-full bg-brand-600 hover:bg-brand-700 text-white rounded-md py-1.5 text-sm font-medium disabled:opacity-50"
           >
             {upload.isPending ? "Uploading…" : "Upload"}
@@ -114,6 +127,11 @@ export function SourcesPage() {
           <h2 className="font-medium mb-2 flex items-center gap-2">
             <FileText className="size-4" /> Paste text / table
           </h2>
+          <SourceLabelPicker
+            recommendedSources={recommendedSources}
+            label={label}
+            onChange={setLabel}
+          />
           <textarea
             value={pasted}
             onChange={(e) => setPasted(e.target.value)}
@@ -124,11 +142,11 @@ export function SourcesPage() {
           <button
             onClick={async () => {
               if (!pasted.trim()) return;
+              if (recommendedSources.length && !label.trim()) return;
               await upload.mutateAsync({ text: pasted, label });
               setPasted("");
-              setLabel("");
             }}
-            disabled={upload.isPending || !pasted.trim()}
+            disabled={upload.isPending || !pasted.trim() || (recommendedSources.length > 0 && !label.trim())}
             className="mt-2 w-full bg-brand-600 hover:bg-brand-700 text-white rounded-md py-1.5 text-sm font-medium disabled:opacity-50"
           >
             Add as source
@@ -186,6 +204,53 @@ export function SourcesPage() {
           Continue to sections →
         </button>
       </div>
+    </div>
+  );
+}
+
+function SourceLabelPicker({
+  recommendedSources,
+  label,
+  onChange,
+}: {
+  recommendedSources: string[];
+  label: string;
+  onChange: (value: string) => void;
+}) {
+  const isRecommended = recommendedSources.includes(label);
+  return (
+    <div className="mb-2 space-y-2">
+      {recommendedSources.length > 0 && (
+        <label className="block">
+          <span className="text-xs text-slate-600">Recommended source being uploaded</span>
+          <select
+            value={isRecommended ? label : "__custom"}
+            onChange={(e) => onChange(e.target.value === "__custom" ? "" : e.target.value)}
+            className="mt-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+          >
+            {recommendedSources.map((source) => (
+              <option key={source} value={source}>
+                {source}
+              </option>
+            ))}
+            <option value="__custom">Other / custom label</option>
+          </select>
+        </label>
+      )}
+      {(!recommendedSources.length || !isRecommended) && (
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Label, e.g. 'Tally FD export'"
+          className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+        />
+      )}
+      {recommendedSources.length > 0 && (
+        <p className="text-xs text-slate-500">
+          You can upload multiple files or add multiple pasted text entries with the same selected source.
+        </p>
+      )}
     </div>
   );
 }

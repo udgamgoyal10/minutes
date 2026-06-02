@@ -9,6 +9,11 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Income Tax Representative",
   "Caretaker of Livestock",
   "Caretaker of Agriculture",
+  "Date of Janmashtami",
+  "Medical Superintendent of JKC Mangarh",
+  "Adoption of Annual Accounts day",
+  "Adoption of Annual Accounts month",
+  "Adoption of Annual Accounts year",
 ] as const;
 
 const HIDDEN_TEMPLATE_VARIABLES = new Set([
@@ -47,6 +52,8 @@ export function canonicalToken(raw: string): string {
   const token = slugifyVariable(raw);
   if (token === "trustee-1-aka-managing-trustee") return TRUSTEE_1_TOKEN;
   if (token === "managing-trustee") return TRUSTEE_1_TOKEN;
+  if (token === "day-of-month") return "day";
+  if (token === "year-of-meeting") return "year";
   return token;
 }
 

@@ -9,7 +9,7 @@ export const claudeAdapter: Adapter = {
   async listModels() {
     // No public list endpoint that works without account permissions —
     // surface a curated set keyed off the configured default.
-    return [env.anthropic.model, "claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-haiku-latest"]
+    return [env.anthropic.model, "claude-sonnet-4-6", "claude-opus-4-6", "claude-3-5-haiku-latest"]
       .filter((v, i, a) => a.indexOf(v) === i);
   },
   async generate(opts: GenerateOpts, onChunk?: StreamHandler): Promise<GenerateResult> {

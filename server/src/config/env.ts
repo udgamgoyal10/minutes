@@ -41,12 +41,12 @@ export const env = {
   },
   anthropic: {
     apiKey: opt("ANTHROPIC_API_KEY"),
-    model: opt("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+    model: opt("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
   },
   gemini: {
     apiKey: opt("GOOGLE_API_KEY"),
-    ocrModel: opt("GEMINI_OCR_MODEL", "gemini-2.5-flash"),
-    chatModel: opt("GEMINI_CHAT_MODEL", "gemini-2.5-pro"),
+    ocrModel: opt("GEMINI_OCR_MODEL", "gemini-3.5-flash"),
+    chatModel: opt("GEMINI_CHAT_MODEL", "gemini-3.5-flash-latest"),
   },
   openai: {
     apiKey: opt("OPENAI_API_KEY"),

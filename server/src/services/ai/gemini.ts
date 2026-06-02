@@ -16,7 +16,7 @@ export const geminiAdapter: Adapter = {
   isConfigured: () => Boolean(env.gemini.apiKey),
   async listModels() {
     if (!env.gemini.apiKey) return [];
-    return [env.gemini.chatModel, env.gemini.ocrModel, "gemini-2.5-pro", "gemini-2.5-flash"]
+    return [env.gemini.chatModel, env.gemini.ocrModel, "gemini-3.5-flash-latest", "gemini-3.5-flash"]
       .filter((v, i, a) => a.indexOf(v) === i);
   },
   async generate(opts: GenerateOpts, onChunk?: StreamHandler): Promise<GenerateResult> {

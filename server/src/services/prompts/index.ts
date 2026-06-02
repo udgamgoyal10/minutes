@@ -20,7 +20,15 @@ export const SYSTEM_BASE =
   "Use Indian English, third person, past tense. Never invent numbers, dates, or names. " +
   "If a placeholder cannot be filled from the provided sources, leave the placeholder text (e.g. <Trustee 1>) intact " +
   "and continue. Do not include monetary amounts unless they are explicitly present in the sources. " +
+  "If the section is blank or the user requests a new resolution, draft suitable meeting-minutes text from scratch using only the instruction, template style, variables, and sources available. " +
   "Return well-formed markdown with paragraphs and bullet lists where the template uses them.";
+
+const STYLE_GUIDE =
+  "Meeting-minutes style reference:\n" +
+  "- Narrative paragraph example: The members discussed the proposal placed before the Board and, after due deliberation, approved the same unanimously.\n" +
+  "- Resolution paragraph example: “RESOLVED THAT the Trust be and is hereby authorised to undertake the said activity in accordance with the objects of the Trust and applicable law.”\n" +
+  "- Authority paragraph example: “RESOLVED FURTHER THAT <Trustee 1>, Managing Trustee, be and is hereby authorised to do all such acts, deeds and things as may be necessary to give effect to this resolution.”\n" +
+  "- Match the template wording below where relevant; preserve formal phrases like 'with the permission of the Chair', 'placed before the Board', and 'resolved unanimously'.\n\n";
 
 const CUSTOM: Record<string, (ctx: PromptContext) => string> = {
   // Examples; the generic prompt handles the rest automatically.
@@ -56,15 +64,16 @@ function placeholderBlock(ctx: PromptContext): string {
 
 export function buildPrompt(ctx: PromptContext): { system: string; prompt: string } {
   const custom = CUSTOM[ctx.section.key];
-  if (custom) return { system: SYSTEM_BASE, prompt: custom(ctx) };
+  if (custom) return { system: SYSTEM_BASE, prompt: STYLE_GUIDE + custom(ctx) };
 
   const generic =
     `Organization: ${ctx.organizationName}\n` +
     `Meeting: ${ctx.meetingTitle}\n` +
     `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
     `Section title: ${ctx.section.title}\n\n` +
-    "Template boilerplate (rewrite/extend, do not invent facts):\n" +
-    `"""\n${ctx.section.bodyText}\n"""\n\n` +
+    STYLE_GUIDE +
+    "Template boilerplate for this section (use as reference; if blank, draft from scratch using the additional instruction and sources):\n" +
+    `"""\n${ctx.section.bodyText || "(blank custom section)"}\n"""\n\n` +
     sourcesBlock(ctx) +
     placeholderBlock(ctx) +
     "\n\nReturn the rewritten section body only (no heading, no preamble).";

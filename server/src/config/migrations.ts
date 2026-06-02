@@ -1,6 +1,8 @@
 import { db } from "./db.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
+import { existsSync } from "node:fs";
+import { basename, resolve } from "node:path";
 
 type Migration = { id: number; name: string; up: () => void | Promise<void> };
 
@@ -496,6 +498,55 @@ const migrations: Migration[] = [
           JSON.stringify(parsed),
           template.id,
         ]);
+      }
+
+      const rows = db.query<{
+        id: number;
+        title: string;
+        content_md: string;
+      }, []>("SELECT id, title, content_md FROM section_drafts").all();
+      const update = db.prepare("UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?");
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          update.run(JSON.stringify(inferRequiredSources(row.title, row.content_md)), row.id);
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 9,
+    name: "register_meeting_2_template",
+    up: async () => {
+      const org = db.query<{ id: number }, [string]>(
+        "SELECT id FROM organizations WHERE slug = ?",
+      ).get("jkp");
+      if (!org) return;
+
+      const templatePaths = [
+        resolve(process.cwd(), "templates", "jkp", "meeting-1.docx"),
+        resolve(process.cwd(), "templates", "jkp", "meeting-2.docx"),
+      ];
+
+      for (const docxPath of templatePaths) {
+        if (!existsSync(docxPath)) continue;
+        const slug = basename(docxPath, ".docx");
+        const parsed = await parseTemplate(docxPath);
+        const existing = db.query<{ id: number }, [number, string]>(
+          "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+        ).get(org.id, slug);
+        if (existing) {
+          db.run(
+            "UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?",
+            [parsed.title, docxPath, JSON.stringify(parsed), existing.id],
+          );
+        } else {
+          db.run(
+            `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+             VALUES (?, ?, ?, ?, ?)`,
+            [org.id, slug, parsed.title, docxPath, JSON.stringify(parsed)],
+          );
+        }
       }
 
       const rows = db.query<{
