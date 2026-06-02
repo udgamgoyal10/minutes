@@ -683,6 +683,36 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: 12,
+    name: "register_meeting_3_template",
+    up: async () => {
+      const org = db.query<{ id: number }, [string]>(
+        "SELECT id FROM organizations WHERE slug = ?",
+      ).get("jkp");
+      if (!org) return;
+
+      const docxPath = resolve(process.cwd(), "templates", "jkp", "meeting-3.docx");
+      if (!existsSync(docxPath)) return;
+      const slug = basename(docxPath, ".docx");
+      const parsed = await parseTemplate(docxPath);
+      const existing = db.query<{ id: number }, [number, string]>(
+        "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+      ).get(org.id, slug);
+      if (existing) {
+        db.run(
+          "UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?",
+          [parsed.title, docxPath, JSON.stringify(parsed), existing.id],
+        );
+      } else {
+        db.run(
+          `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [org.id, slug, parsed.title, docxPath, JSON.stringify(parsed)],
+        );
+      }
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

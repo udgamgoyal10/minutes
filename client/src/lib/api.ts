@@ -269,12 +269,36 @@ export function useUpdateSection(meetingId: number) {
 export function useCreateSection(meetingId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { title: string; mode?: "template" | "ai"; content_md?: string; required_sources?: string[] }) =>
+    mutationFn: (vars: {
+      title: string;
+      mode?: "template" | "ai";
+      content_md?: string;
+      template_body_text?: string;
+      required_sources?: string[];
+    }) =>
       apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections`, {
         method: "POST",
         body: JSON.stringify(vars),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export type SectionTemplate = {
+  key: string;
+  title: string;
+  body_text: string;
+  placeholders: { token: string; raw: string }[];
+  required_sources: string[];
+  template_id: number;
+  template_slug: string;
+  template_title: string;
+};
+
+export function useSectionTemplates() {
+  return useQuery({
+    queryKey: ["section-templates"],
+    queryFn: () => apiFetch<{ sections: SectionTemplate[] }>(`/api/section-templates`),
   });
 }
 

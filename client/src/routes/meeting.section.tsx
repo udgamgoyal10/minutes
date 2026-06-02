@@ -1,19 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { Sparkles, Check, Loader2, RotateCcw } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Loader2, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import {
+  useCreateSection,
+  useDeleteSection,
+  useGenerateSection,
   useMeeting,
+  useProviders,
+  useReorderSections,
+  useRevertSection,
   useSections,
   useSources,
-  useProviders,
   useUpdateSection,
-  useGenerateSection,
-  useRevertSection,
-  type SectionDraft,
   type ProviderInfo,
+  type SectionDraft,
+  type SectionTemplate,
 } from "../lib/api.ts";
 import { StepNav } from "../components/StepNav.tsx";
 import { SectionSourcePanel } from "../components/SectionSourcePanel.tsx";
+import { SectionPicker } from "../components/SectionPicker.tsx";
 
 export function SectionPage() {
   const params = useParams({ strict: false });
@@ -28,6 +33,12 @@ export function SectionPage() {
   const update = useUpdateSection(meetingId);
   const gen = useGenerateSection(meetingId);
   const revert = useRevertSection(meetingId);
+  const createSection = useCreateSection(meetingId);
+  const deleteSection = useDeleteSection(meetingId);
+  const reorder = useReorderSections(meetingId);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busyAddKey, setBusyAddKey] = useState<string | null>(null);
 
   const sections = sectionsQ.data?.sections ?? [];
   const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
@@ -62,25 +73,118 @@ export function SectionPage() {
   return (
     <div>
       <StepNav meetingId={meetingId} current="section" />
-      <div className="grid grid-cols-[16rem_1fr] gap-6">
+      <div className="grid grid-cols-[18rem_1fr] gap-6">
         <aside className="space-y-1">
-          {sections.map((s) => (
-            <Link
-              key={s.section_key}
-              to="/m/$id/section/$key"
-              params={{ id: String(meetingId), key: s.section_key }}
-              className={`block px-3 py-2 rounded-md text-sm ${
-                s.section_key === sectionKey
-                  ? "bg-brand-50 text-brand-700 border border-brand-200"
-                  : "hover:bg-slate-100 text-slate-700"
-              }`}
-            >
-              <span className="text-xs text-slate-400 mr-2">{s.ordinal}.</span>
-              {s.title}
-              <StatusPill status={s.status} />
-            </Link>
-          ))}
+          <button
+            onClick={() => setPickerOpen(true)}
+            className="w-full flex items-center justify-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md py-2 text-sm font-medium"
+          >
+            <Plus className="size-4" /> Add section
+          </button>
+          {sections.map((s, index) => {
+            const isActive = s.section_key === sectionKey;
+            return (
+              <div
+                key={s.section_key}
+                className={`group flex items-stretch gap-1 rounded-md ${
+                  isActive ? "bg-brand-50 border border-brand-200" : "hover:bg-slate-100"
+                }`}
+              >
+                <Link
+                  to="/m/$id/section/$key"
+                  params={{ id: String(meetingId), key: s.section_key }}
+                  className={`flex-1 min-w-0 px-3 py-2 text-sm ${
+                    isActive ? "text-brand-700" : "text-slate-700"
+                  }`}
+                >
+                  <span className="text-xs text-slate-400 mr-2">{s.ordinal}.</span>
+                  <span className="truncate">{s.title}</span>
+                  <StatusPill status={s.status} />
+                </Link>
+                <div className="flex flex-col items-center justify-center pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={async () => {
+                      if (index === 0 || reorder.isPending) return;
+                      const order = sections.map((x) => x.section_key);
+                      const swap = order[index - 1]!;
+                      order[index - 1] = s.section_key;
+                      order[index] = swap;
+                      await reorder.mutateAsync(order);
+                    }}
+                    disabled={index === 0 || reorder.isPending}
+                    className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    title="Move up"
+                  >
+                    <ArrowUp className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (index === sections.length - 1 || reorder.isPending) return;
+                      const order = sections.map((x) => x.section_key);
+                      const swap = order[index + 1]!;
+                      order[index + 1] = s.section_key;
+                      order[index] = swap;
+                      await reorder.mutateAsync(order);
+                    }}
+                    disabled={index === sections.length - 1 || reorder.isPending}
+                    className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    title="Move down"
+                  >
+                    <ArrowDown className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Remove section "${s.title}"?`)) return;
+                      await deleteSection.mutateAsync(s.section_key);
+                      if (isActive) {
+                        const remaining = sections.filter((x) => x.section_key !== s.section_key);
+                        if (remaining.length) {
+                          navigate({
+                            to: "/m/$id/section/$key",
+                            params: { id: String(meetingId), key: remaining[0]!.section_key },
+                          });
+                        }
+                      }
+                    }}
+                    className="p-0.5 text-slate-400 hover:text-rose-600"
+                    title="Delete"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </aside>
+
+        <SectionPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          excludeKeys={sections.map((s) => s.section_key)}
+          busyKey={busyAddKey}
+          onPick={async (s: SectionTemplate) => {
+            setBusyAddKey(s.key);
+            try {
+              const result = await createSection.mutateAsync({
+                title: s.title,
+                template_body_text: s.body_text,
+                content_md: s.body_text,
+                required_sources: s.required_sources,
+                mode: "template",
+              });
+              setPickerOpen(false);
+              const created = result.section;
+              if (created) {
+                navigate({
+                  to: "/m/$id/section/$key",
+                  params: { id: String(meetingId), key: created.section_key },
+                });
+              }
+            } finally {
+              setBusyAddKey(null);
+            }
+          }}
+        />
 
         <main>
           <h1 className="text-xl font-semibold mb-2">{section.title}</h1>

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { ShieldCheck, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import {
+  useCreateSection,
+  useDeleteSection,
   useMeeting,
-  useTemplates,
   useProviders,
   useSections,
+  useTemplates,
   useUpdateMeeting,
   type ProviderInfo,
+  type SectionTemplate,
 } from "../lib/api.ts";
 import { StepNav } from "../components/StepNav.tsx";
+import { SectionPicker } from "../components/SectionPicker.tsx";
 
 export function SetupPage() {
   const { id } = useParams({ strict: false });
@@ -20,6 +24,10 @@ export function SetupPage() {
   const providersQ = useProviders();
   const sectionsQ = useSections(meetingId);
   const update = useUpdateMeeting(meetingId);
+  const createSection = useCreateSection(meetingId);
+  const deleteSection = useDeleteSection(meetingId);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busyAddKey, setBusyAddKey] = useState<string | null>(null);
 
   const meeting = meetingQ.data?.meeting;
   const template = useMemo(
@@ -106,6 +114,80 @@ export function SetupPage() {
           );
         })}
       </div>
+
+      <h2 className="text-lg font-medium mt-8 mb-3">Sections</h2>
+      <p className="text-sm text-slate-500 mb-3">
+        The meeting starts with every section from <span className="font-medium">{template?.title ?? "the template"}</span>.
+        Remove ones you don’t need, or add more from any template before moving to the editor.
+      </p>
+      <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
+        {(sectionsQ.data?.sections ?? []).length === 0 && (
+          <p className="p-4 text-sm text-slate-500">No sections in this meeting yet.</p>
+        )}
+        {(sectionsQ.data?.sections ?? []).map((s) => (
+          <div key={s.section_key} className="flex items-start gap-3 px-4 py-2.5">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-400">{s.ordinal}.</span>
+                <span className="text-sm font-medium text-slate-900">{s.title}</span>
+              </div>
+              {s.required_sources.length > 0 && (
+                <ul className="mt-1 flex flex-wrap gap-1">
+                  {s.required_sources.map((source) => (
+                    <li
+                      key={source}
+                      className="text-[10px] bg-amber-50 border border-amber-200 text-amber-800 rounded px-2 py-0.5"
+                    >
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button
+              onClick={async () => {
+                if (!confirm(`Remove section "${s.title}"?`)) return;
+                await deleteSection.mutateAsync(s.section_key);
+              }}
+              disabled={deleteSection.isPending}
+              className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+              title="Remove section"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </div>
+        ))}
+        <div className="p-3">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="w-full flex items-center justify-center gap-1 text-sm border border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50 text-slate-600 rounded-md py-2"
+          >
+            <Plus className="size-4" /> Add section from catalog
+          </button>
+        </div>
+      </div>
+
+      <SectionPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        excludeKeys={(sectionsQ.data?.sections ?? []).map((s) => s.section_key)}
+        busyKey={busyAddKey}
+        onPick={async (s: SectionTemplate) => {
+          setBusyAddKey(s.key);
+          try {
+            await createSection.mutateAsync({
+              title: s.title,
+              template_body_text: s.body_text,
+              content_md: s.body_text,
+              required_sources: s.required_sources,
+              mode: "template",
+            });
+          } finally {
+            setBusyAddKey(null);
+          }
+        }}
+      />
 
       <h2 className="text-lg font-medium mt-8 mb-3">AI provider</h2>
       <ProviderPicker

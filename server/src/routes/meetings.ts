@@ -51,6 +51,42 @@ r.get("/templates", (c) => {
   });
 });
 
+r.get("/section-templates", (c) => {
+  const rows = db.query<TemplateRow, []>(
+    "SELECT id, organization_id, slug, title, docx_path, parsed_json FROM meeting_templates ORDER BY slug",
+  ).all();
+  const seen = new Set<string>();
+  const sections: Array<{
+    key: string;
+    title: string;
+    body_text: string;
+    placeholders: { token: string; raw: string }[];
+    required_sources: string[];
+    template_id: number;
+    template_slug: string;
+    template_title: string;
+  }> = [];
+  for (const row of rows) {
+    const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
+    for (const section of parsed.sections) {
+      const dedupeKey = `${section.key}::${section.title.trim().toLowerCase()}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      sections.push({
+        key: section.key,
+        title: section.title,
+        body_text: section.bodyText,
+        placeholders: section.placeholders,
+        required_sources: inferRequiredSources(section.title, section.bodyText),
+        template_id: row.id,
+        template_slug: row.slug,
+        template_title: row.title,
+      });
+    }
+  }
+  return c.json({ sections });
+});
+
 r.get("/meetings", (c) => {
   const user = c.get("user");
   const rows = db.query<MeetingRow, [number]>(

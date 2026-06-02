@@ -129,6 +129,7 @@ r.post("/meetings/:id/sections", async (c) => {
     title: string;
     mode: "template" | "ai";
     content_md: string;
+    template_body_text: string;
     required_sources: string[];
   }>;
   const title = body.title?.trim();
@@ -138,12 +139,14 @@ r.post("/meetings/:id/sections", async (c) => {
     "SELECT COALESCE(MAX(ordinal), 0) AS ordinal FROM section_drafts WHERE meeting_id = ?",
   ).get(id)?.ordinal ?? 0;
   const key = uniqueSectionKey(id, title);
-  const required = body.required_sources ?? inferRequiredSources(title, body.content_md ?? "");
+  const templateBody = body.template_body_text ?? body.content_md ?? "";
+  const contentMd = body.content_md ?? templateBody;
+  const required = body.required_sources ?? inferRequiredSources(title, contentMd);
   const res = db.run(
     `INSERT INTO section_drafts
-       (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    [id, key, max + 1, title, body.content_md ?? "", body.mode === "ai" ? "ai" : "template", JSON.stringify(required)],
+       (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    [id, key, max + 1, title, contentMd, templateBody, body.mode === "ai" ? "ai" : "template", JSON.stringify(required)],
   );
   const row = db.query<SectionRow, [number]>("SELECT * FROM section_drafts WHERE id = ?")
     .get(Number(res.lastInsertRowid));
