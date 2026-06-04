@@ -69,7 +69,10 @@ r.get("/section-templates", (c) => {
   for (const row of rows) {
     const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
     for (const section of parsed.sections) {
-      const dedupeKey = `${section.key}::${section.title.trim().toLowerCase()}`;
+      // Normalize titles (drops "the", punctuation, casing) so near-identical
+      // sections like "Maintenance of Agricultural Fields" and "Maintenance of
+      // the Agricultural Fields" collapse to a single catalog entry.
+      const dedupeKey = normalizeSectionTitle(section.title);
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
       sections.push({

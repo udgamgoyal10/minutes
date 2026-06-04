@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Check, Loader2, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Loader2, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import {
   useCreateSection,
   useDeleteSection,
@@ -9,6 +9,7 @@ import {
   useProviders,
   useReorderSections,
   useRevertSection,
+  useSectionPrompt,
   useSections,
   useSources,
   useUpdateSection,
@@ -49,10 +50,27 @@ export function SectionPage() {
   const [userPrompt, setUserPrompt] = useState("");
   const [provider, setProvider] = useState<ProviderInfo["id"] | "">("");
   const [model, setModel] = useState("");
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptText, setPromptText] = useState("");
+  const [promptDirty, setPromptDirty] = useState(false);
+
+  const promptQ = useSectionPrompt(meetingId, sectionKey);
+  const defaultPrompt = promptQ.data?.prompt ?? "";
 
   useEffect(() => {
     if (section) setContent(section.preview_md || section.content_md);
   }, [section?.id, section?.preview_md]);
+
+  // Reset the editable prompt whenever the section changes or a fresh default
+  // arrives, unless the user has manually edited it.
+  useEffect(() => {
+    setPromptDirty(false);
+    setShowPrompt(false);
+  }, [sectionKey]);
+
+  useEffect(() => {
+    if (!promptDirty) setPromptText(defaultPrompt);
+  }, [defaultPrompt, promptDirty]);
 
   useEffect(() => {
     const m = meetingQ.data?.meeting;
@@ -245,9 +263,56 @@ export function SectionPage() {
               value={userPrompt}
               onChange={(e) => setUserPrompt(e.target.value)}
               rows={2}
-              placeholder="Extra instructions (optional). Leave blank to use the generic template prompt."
+              placeholder="Extra instructions (optional). Leave blank to use the default section prompt."
               className="w-full border border-slate-300 rounded-md p-2 text-sm"
             />
+
+            <div className="border border-slate-200 rounded-md">
+              <button
+                type="button"
+                onClick={() => setShowPrompt((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                <span className="flex items-center gap-1">
+                  {showPrompt ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                  {promptDirty ? "Edited prompt (sent to AI)" : "Default prompt for this section"}
+                </span>
+                {promptDirty && (
+                  <span className="text-[10px] uppercase tracking-wide bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                    custom
+                  </span>
+                )}
+              </button>
+              {showPrompt && (
+                <div className="px-3 pb-3 space-y-2">
+                  <p className="text-[11px] text-slate-500">
+                    This is the exact prompt sent to the AI. Edit it to change behaviour for this run,
+                    or reset to the system default. By default the AI only changes the
+                    <span className="font-mono"> &lt;…&gt; </span> placeholder locations.
+                  </p>
+                  <textarea
+                    value={promptText}
+                    onChange={(e) => {
+                      setPromptText(e.target.value);
+                      setPromptDirty(true);
+                    }}
+                    rows={12}
+                    className="w-full border border-slate-300 rounded-md p-2 font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setPromptDirty(false);
+                      const fresh = await promptQ.refetch();
+                      setPromptText(fresh.data?.prompt ?? defaultPrompt);
+                    }}
+                    className="text-xs text-brand-700 hover:underline flex items-center gap-1"
+                  >
+                    <RotateCcw className="size-3.5" /> Reset to default prompt
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex gap-2 items-center justify-between flex-wrap">
               <div className="flex gap-2 items-center text-xs">
                 <select
@@ -266,13 +331,11 @@ export function SectionPage() {
                   title="Provider for this section"
                 >
                   <option value="">(provider)</option>
-                  {(providersQ.data?.providers ?? [])
-                    .filter((p) => p.configured)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.id}
-                      </option>
-                    ))}
+                  {(providersQ.data?.providers ?? []).map((p) => (
+                    <option key={p.id} value={p.id} disabled={!p.configured}>
+                      {p.id}{p.configured ? "" : " (needs API key)"}
+                    </option>
+                  ))}
                 </select>
                 <select
                   value={model}
@@ -310,7 +373,8 @@ export function SectionPage() {
                       key: section.section_key,
                       provider: provider as ProviderInfo["id"],
                       model,
-                      user_prompt: userPrompt || undefined,
+                      user_prompt: promptDirty ? undefined : userPrompt || undefined,
+                      prompt_override: promptDirty ? promptText : undefined,
                     });
                     const next = result.section?.preview_md ?? result.section?.content_md;
                     if (next != null) setContent(next);

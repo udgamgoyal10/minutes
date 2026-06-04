@@ -11,7 +11,12 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Caretaker of Agriculture",
   "Date of Janmashtami",
   "Medical Superintendent of JKC Mangarh",
+  "Financial Year (e.g. 19-20)",
 ] as const;
+
+// Tokens whose value is a single date the user picks; rendered as a formatted
+// date string (e.g. "5 September 2024") rather than expanded into day/month/year.
+export const SIMPLE_DATE_TOKENS = new Set(["date-of-janmashtami"]);
 
 // Variables that the user fills in as a single date; the day/month/year
 // placeholders inside the template body are derived automatically from it.
@@ -86,6 +91,12 @@ export function canonicalToken(raw: string): string {
   if (token === "managing-trustee") return TRUSTEE_1_TOKEN;
   if (token === "day-of-month") return "day";
   if (token === "year-of-meeting") return "year";
+  // "Approval of Annual Accounts" templates reference the adoption year using a
+  // different phrasing; unify it onto the adoption-of-annual-accounts year so it
+  // is filled from the same setup date.
+  if (token === "year-of-adoption-of-annual-accounts") return "adoption-of-annual-accounts-year";
+  // Any "Financial Year (e.g. …)" phrasing collapses to a single variable.
+  if (token.startsWith("financial-year")) return "financial-year";
   return token;
 }
 
@@ -111,10 +122,14 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
     raw: d.raw,
     kind: "date",
   }));
+  // Mark simple-date additional variables (e.g. Date of Janmashtami) as dates.
+  const additionalTyped = additional.map((p) =>
+    SIMPLE_DATE_TOKENS.has(p.token) ? { ...p, kind: "date" as const } : p,
+  );
   return mergePlaceholders([
     ...globalPlaceholders,
-    ...allPlaceholders.filter((p) => additional.some((a) => a.token === p.token)),
-    ...additional,
+    ...allPlaceholders.filter((p) => additionalTyped.some((a) => a.token === p.token)),
+    ...additionalTyped,
     ...dateVars,
   ]);
 }
@@ -154,6 +169,11 @@ export function buildTemplateVariables(args: {
       out[date.monthToken] = parts.month;
       out[date.yearToken] = parts.year;
     }
+  }
+  // Format simple-date tokens (single formatted date string).
+  for (const tok of SIMPLE_DATE_TOKENS) {
+    const formatted = formatDate(out[tok]);
+    if (formatted) out[tok] = formatted;
   }
   return out;
 }

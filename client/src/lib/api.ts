@@ -353,6 +353,7 @@ export function useGenerateSection(meetingId: number) {
       provider?: ProviderInfo["id"];
       model?: string;
       user_prompt?: string;
+      prompt_override?: string;
       source_ids?: number[];
     }) =>
       apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections/${vars.key}/generate`, {
@@ -361,10 +362,23 @@ export function useGenerateSection(meetingId: number) {
           provider: vars.provider,
           model: vars.model,
           user_prompt: vars.user_prompt,
+          prompt_override: vars.prompt_override,
           source_ids: vars.source_ids,
         }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+  });
+}
+
+export function useSectionPrompt(meetingId: number, sectionKey: string | null) {
+  return useQuery({
+    queryKey: ["meetings", meetingId, "sections", sectionKey, "prompt"],
+    queryFn: () =>
+      apiFetch<{ system: string; prompt: string }>(
+        `/api/meetings/${meetingId}/sections/${sectionKey}/prompt`,
+      ),
+    enabled: meetingId != null && !!sectionKey,
+    staleTime: 0,
   });
 }
 

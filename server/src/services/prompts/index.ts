@@ -34,48 +34,41 @@ const STYLE_GUIDE =
   "- Authority paragraph example: “RESOLVED FURTHER THAT <Trustee 1>, Managing Trustee, be and is hereby authorised to do all such acts, deeds and things as may be necessary to give effect to this resolution.”\n" +
   "- Match the template wording below where relevant; preserve formal phrases like 'with the permission of the Chair', 'placed before the Board', and 'resolved unanimously'.\n\n";
 
-const CUSTOM: Record<string, (ctx: PromptContext) => string> = {
-  // Examples; the generic prompt handles the rest automatically.
-  "review-of-significant-activities": (ctx) =>
-    `Section: ${ctx.section.title}\n\n` +
-    "Summarize significant trust activities NOT already covered by earlier sections. " +
-    "Focus EXCLUSIVELY on expense entries greater than \u20b91,00,000 (one lakh). " +
-    "Ignore everything at or below \u20b91,00,000. If no expense in the sources exceeds one lakh, write a single short sentence stating that no significant (> \u20b91 L) expenses were recorded in the period. " +
-    "Cluster the > \u20b91 L items by activity, omit specific rupee values in the narrative, and present as a clean bullet list followed by any resolutions the board passed. " +
-    "Use 'RESOLVED THAT \u2026' formatting for resolutions.\n\n" +
-    sourcesBlock(ctx) +
-    placeholderBlock(ctx),
-  "maintenance-of-agricultural-fields": (ctx) => expensePrompt(ctx, "agricultural"),
-  "maintenance-of-the-agricultural-fields": (ctx) => expensePrompt(ctx, "agricultural"),
-  "maintenance-of-livestock": (ctx) => expensePrompt(ctx, "livestock"),
-  "livestock-expenses": (ctx) => expensePrompt(ctx, "livestock"),
-  "maintenance-of-gardens": (ctx) => expensePrompt(ctx, "garden"),
+// Per-section guidance describing WHAT to put into the <placeholder> locations.
+// This text is appended to whichever base prompt (template-fill or rewrite)
+// buildPrompt selects, so it applies in both modes.
+const NO_PII_EXPENSES =
+  "Do NOT include vendor names, payment methods, monetary amounts, or dates anywhere in the output.";
+
+const SECTION_GUIDANCE: Record<string, (ctx: PromptContext) => string> = {
+  "review-of-significant-activities": () =>
+    "Section-specific guidance:\n" +
+    "- Summarise significant trust activities NOT already covered by earlier sections.\n" +
+    "- Focus EXCLUSIVELY on expense entries greater than \u20b91,00,000 (one lakh); ignore everything at or below one lakh.\n" +
+    "- If no expense exceeds one lakh, write a single short sentence stating that no significant (> \u20b91 L) expenses were recorded in the period.\n" +
+    "- Cluster the > \u20b91 L items by activity and present as a clean bullet list followed by any resolutions the board passed.\n" +
+    `- ${NO_PII_EXPENSES}\n`,
+  "maintenance-of-agricultural-fields": (ctx) => expenseGuidance(ctx, "agricultural"),
+  "maintenance-of-the-agricultural-fields": (ctx) => expenseGuidance(ctx, "agricultural"),
+  "maintenance-of-livestock": (ctx) => expenseGuidance(ctx, "livestock"),
+  "livestock-expenses": (ctx) => expenseGuidance(ctx, "livestock"),
+  "maintenance-of-gardens": (ctx) => expenseGuidance(ctx, "garden"),
   "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": (ctx) =>
-    expensePrompt(ctx, "garden"),
-  "investment-chart": (ctx) =>
-    `Section: ${ctx.section.title}\n\n` +
-    "Fill the bullet structure exactly as in the template. For each placeholder of the form " +
-    "<insert fund names here where …>, list only fund names that appear in the sources. " +
-    "Do NOT include any rupee amounts.\n\n" +
-    "There are EXACTLY five recognised fund types for this trust:\n" +
-    "  1. Poor Relief Fund\n" +
-    "  2. Corpus Endowment\n" +
-    "  3. Corpus\n" +
-    "  4. Hospital\n" +
-    "  5. General Fund\n" +
-    "When mentioning which funds had new investments, received interest, or had premature redemptions, you MUST use ONLY these exact names. " +
-    "Map any synonyms / abbreviations in the sources onto these five names; if a source mentions a fund that does not match any of the five, omit it rather than inventing a new fund name.\n\n" +
-    "When summarising the AI overview / narrative bullets for this section you MUST cover, in plain English and only when the sources support it:\n" +
-    "  - which of the five funds were used to make new investments (i.e., source of funds) and into which schemes/instruments those investments were placed,\n" +
-    "  - any premature redemption / pre-mature withdrawal of investments that occurred during the period (which of the five funds was affected),\n" +
-    "  - interest received on existing investments (mention which of the five funds received interest and the schemes that paid interest; do NOT list rupee amounts),\n" +
-    "  - any investments that matured during the period and what happened to the proceeds.\n" +
-    "If the sources are silent on one of these aspects, omit the corresponding bullet rather than inventing data.\n\n" +
-    sourcesBlock(ctx) +
-    placeholderBlock(ctx),
+    expenseGuidance(ctx, "garden"),
+  "progress-report-on-construction-projects": () =>
+    "Section-specific guidance:\n" +
+    "- Summarise the construction activity and progress made during the period.\n" +
+    `- ${NO_PII_EXPENSES}\n`,
+  "investment-chart": () =>
+    "Section-specific guidance:\n" +
+    "- For each placeholder of the form <insert fund names here where \u2026>, list only fund names that appear in the sources.\n" +
+    "- There are EXACTLY five recognised fund types for this trust: Poor Relief Fund, Corpus Endowment, Corpus, Hospital, and General Fund.\n" +
+    "- When mentioning which funds had new investments, received interest, or had premature redemptions, you MUST use ONLY these exact five names. Map any synonyms/abbreviations onto these five; if a fund does not match any of the five, omit it rather than inventing a name.\n" +
+    "- In the narrative bullets, cover (only when the sources support it): which of the five funds made new investments and into which schemes; any premature redemption/withdrawal (which fund); interest received (which fund and scheme); and any investments that matured and what happened to the proceeds.\n" +
+    "- Do NOT include dates, bank account names, bank names, or any rupee amounts.\n",
 };
 
-function expensePrompt(ctx: PromptContext, kind: "agricultural" | "livestock" | "garden"): string {
+function expenseGuidance(_ctx: PromptContext, kind: "agricultural" | "livestock" | "garden"): string {
   const label =
     kind === "agricultural"
       ? "agricultural fields"
@@ -83,14 +76,12 @@ function expensePrompt(ctx: PromptContext, kind: "agricultural" | "livestock" | 
         ? "livestock"
         : "gardens";
   return (
-    `Section: ${ctx.section.title}\n\n` +
-    `Summarise expenses incurred for maintenance of ${label} during the period.\n\n` +
-    "Focus rules (apply in this order):\n" +
-    "  1. If ANY expense in the sources is greater than \u20b91,00,000 (one lakh), focus the narrative ONLY on those > \u20b91 L items \u2014 describe what the money was spent on, but do NOT print rupee amounts.\n" +
-    "  2. If NO expense exceeds one lakh, fall back to summarising across all expenses, ordered by highest value first and by most common category. Cluster small recurring entries; do NOT print rupee amounts.\n\n" +
-    "Present the result as a short clean bullet list. Add any resolution paragraphs the sources support afterwards using 'RESOLVED THAT \u2026' formatting.\n\n" +
-    sourcesBlock(ctx) +
-    placeholderBlock(ctx)
+    "Section-specific guidance:\n" +
+    `- Summarise expenses incurred for maintenance of ${label} during the period.\n` +
+    "- If ANY expense in the sources is greater than \u20b91,00,000 (one lakh), focus ONLY on those > \u20b91 L items \u2014 describe what the money was spent on.\n" +
+    "- If NO expense exceeds one lakh, summarise across all expenses, ordered by highest value first and by most common category, clustering small recurring entries.\n" +
+    "- Present the result as a short clean bullet list.\n" +
+    `- ${NO_PII_EXPENSES}\n`
   );
 }
 
@@ -117,21 +108,32 @@ function dateWindowBlock(ctx: PromptContext): string {
   );
 }
 
+function guidanceBlock(ctx: PromptContext): string {
+  const fn = SECTION_GUIDANCE[ctx.section.key];
+  return fn ? `\n${fn(ctx)}\n` : "";
+}
+
 export function buildPrompt(ctx: PromptContext): { system: string; prompt: string } {
   const templateBody = ctx.templateBodyText || ctx.section.bodyText;
-  const isTemplateFill = ctx.mode === "template" && ctx.sources.length > 0 && /<[^<>\n]{2,200}>/.test(templateBody);
-  const custom = CUSTOM[ctx.section.key];
+  const hasPlaceholders = /<[^<>\n]{2,200}>/.test(templateBody);
+  const header =
+    `Organization: ${ctx.organizationName}\n` +
+    `Meeting: ${ctx.meetingTitle}\n` +
+    `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
+    `Section title: ${ctx.section.title}\n\n`;
 
-  if (isTemplateFill) {
+  // Default behaviour: only change the <placeholder> locations and keep every
+  // other word of the template intact. This applies whenever the section is in
+  // "template" mode and the body still contains <placeholders>. A user prompt
+  // (appended later by the caller) can override this when they want more.
+  if (ctx.mode !== "ai" && hasPlaceholders) {
     const fill =
-      `Organization: ${ctx.organizationName}\n` +
-      `Meeting: ${ctx.meetingTitle}\n` +
-      `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
-      `Section title: ${ctx.section.title}\n\n` +
+      header +
       STYLE_GUIDE +
       dateWindowBlock(ctx) +
       "Template wording for this section (KEEP every word and line break exactly, only replace the <placeholder> tokens):\n" +
       `"""\n${templateBody}\n"""\n\n` +
+      guidanceBlock(ctx) +
       sourcesBlock(ctx) +
       placeholderBlock(ctx) +
       "\n\nReplace each <placeholder> with concise AI-summarized content drawn ONLY from the sources within the date window. " +
@@ -141,17 +143,13 @@ export function buildPrompt(ctx: PromptContext): { system: string; prompt: strin
     return { system: SYSTEM_BASE, prompt: fill };
   }
 
-  if (custom) return { system: SYSTEM_BASE, prompt: STYLE_GUIDE + dateWindowBlock(ctx) + custom(ctx) };
-
   const generic =
-    `Organization: ${ctx.organizationName}\n` +
-    `Meeting: ${ctx.meetingTitle}\n` +
-    `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
-    `Section title: ${ctx.section.title}\n\n` +
+    header +
     STYLE_GUIDE +
     dateWindowBlock(ctx) +
     "Template boilerplate for this section (use as reference; if blank, draft from scratch using the additional instruction and sources):\n" +
     `"""\n${templateBody || "(blank custom section)"}\n"""\n\n` +
+    guidanceBlock(ctx) +
     sourcesBlock(ctx) +
     placeholderBlock(ctx) +
     "\n\nReturn the rewritten section body only (no heading, no preamble).";

@@ -62,6 +62,10 @@ export async function renderDocx(args: {
   // 3) Replace <placeholder> tokens in the resulting xml using variables.
   xml = replacePlaceholders(xml, variables);
 
+  // 4) Any placeholder that could not be filled (still <…>) is shown in red so
+  //    the reviewer can spot the gaps in the exported document.
+  xml = colorizeUnfilledPlaceholders(xml);
+
   zip.file("word/document.xml", xml);
   const out = await zip.generateAsync({ type: "uint8array" });
   return out;
@@ -80,6 +84,30 @@ function replacePlaceholders(xml: string, vars: Record<string, string>): string 
     const key = canonicalToken(raw);
     const v = lookup.get(key);
     return v != null && v !== "" ? xmlEscape(v) : full;
+  });
+}
+
+// Wrap any remaining <placeholder> tokens in a red-coloured run so unfilled
+// values stand out in the exported Word document. Operates run-by-run; a run's
+// text node cannot contain raw angle brackets (they are XML-escaped), so we
+// match the escaped &lt;…&gt; form inside <w:t> nodes and split the run.
+function colorizeUnfilledPlaceholders(xml: string): string {
+  const RUN_RE = /<w:r\b[^>]*>(<w:rPr>[\s\S]*?<\/w:rPr>)?(<w:t(?:\s[^>]*)?>)([^<]*)(<\/w:t>)<\/w:r>/g;
+  return xml.replace(RUN_RE, (full, rPr: string | undefined, tOpen: string, text: string, tClose: string) => {
+    if (!/&lt;[^&]{1,200}?&gt;/.test(text)) return full;
+    const rpr = rPr ?? "";
+    const redRpr = rpr
+      ? rpr.replace("</w:rPr>", '<w:color w:val="FF0000"/></w:rPr>')
+      : '<w:rPr><w:color w:val="FF0000"/></w:rPr>';
+    // Split the text into placeholder vs. plain segments, preserving order.
+    const segments = text.split(/(&lt;[^&]{1,200}?&gt;)/).filter((s) => s.length > 0);
+    return segments
+      .map((seg) => {
+        const isPlaceholder = /^&lt;[^&]{1,200}?&gt;$/.test(seg);
+        const pr = isPlaceholder ? redRpr : rpr;
+        return `<w:r>${pr}${tOpen}${seg}${tClose}</w:r>`;
+      })
+      .join("");
   });
 }
 

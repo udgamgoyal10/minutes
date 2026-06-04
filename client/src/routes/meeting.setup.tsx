@@ -71,7 +71,12 @@ export function SetupPage() {
 
   const usedTokens = useMemo(() => {
     const used = new Set<string>();
-    const bodies = (sectionsQ.data?.sections ?? []).map((s) => s.template_body_text ?? "");
+    // Scan both the section body AND title — some placeholders (e.g. Financial
+    // Year) only appear in the section heading.
+    const bodies = (sectionsQ.data?.sections ?? []).flatMap((s) => [
+      s.template_body_text ?? "",
+      s.title ?? "",
+    ]);
     for (const body of bodies) {
       for (const m of body.matchAll(/<([^<>\n]{2,200}?)>/g)) {
         used.add(slugToken(m[1] ?? ""));
@@ -242,6 +247,8 @@ function slugToken(raw: string): string {
   if (base === "trustee-1-aka-managing-trustee" || base === "managing-trustee") return "trustee-1";
   if (base === "day-of-month") return "day";
   if (base === "year-of-meeting") return "year";
+  if (base === "year-of-adoption-of-annual-accounts") return "adoption-of-annual-accounts-year";
+  if (base.startsWith("financial-year")) return "financial-year";
   return base;
 }
 
@@ -299,35 +306,33 @@ function ProviderPicker({
   onChangeProvider: (p: ProviderInfo["id"]) => void;
   onChangeModel: (m: string) => void;
 }) {
-  const configured = providers.filter((p) => p.configured);
-  const selected = configured.find((p) => p.id === provider);
+  const selected = providers.find((p) => p.id === provider && p.configured);
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
       <div className="flex gap-2 flex-wrap">
-        {configured.map((p) => (
+        {providers.map((p) => (
           <button
             key={p.id}
             type="button"
+            disabled={!p.configured}
+            title={p.configured ? undefined : `Set the API key for ${p.id} in the server .env to enable it`}
             onClick={() => {
+              if (!p.configured) return;
               onChangeProvider(p.id);
               onChangeModel(p.models[0] ?? "");
             }}
             className={`px-3 py-1.5 rounded-md text-sm border ${
               provider === p.id
                 ? "border-brand-600 bg-brand-50 text-brand-700"
-                : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                : p.configured
+                  ? "border-slate-300 text-slate-700 hover:bg-slate-50"
+                  : "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
             }`}
           >
-            {p.id} <span className="text-xs text-slate-500 ml-1">({p.category})</span>
+            {p.id} <span className="text-xs ml-1">({p.configured ? p.category : "needs API key"})</span>
           </button>
         ))}
-        {configured.length === 0 && (
-          <p className="text-sm text-slate-500">
-            No providers configured. Set <code>OLLAMA_BASE_URL</code>, <code>ANTHROPIC_API_KEY</code>,
-            or <code>GOOGLE_API_KEY</code> in the server .env.
-          </p>
-        )}
       </div>
       {selected && (
         <label className="block">
