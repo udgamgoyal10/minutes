@@ -302,6 +302,7 @@ export type SectionTemplate = {
   template_id: number;
   template_slug: string;
   template_title: string;
+  custom_id?: number;
 };
 
 export function useSectionTemplates() {
@@ -309,6 +310,50 @@ export function useSectionTemplates() {
     queryKey: ["section-templates"],
     queryFn: () => apiFetch<{ sections: SectionTemplate[] }>(`/api/section-templates`),
   });
+}
+
+export function useCreateSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { title: string; body_text: string; required_sources?: string[] }) =>
+      apiFetch<{ template: SectionTemplate }>(`/api/section-templates`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
+export function useDeleteSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (customId: number) =>
+      apiFetch<{ ok: true }>(`/api/section-templates/custom/${customId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
+export type ExampleSource = { label: string; file: string; download_url: string };
+
+export function useSectionExamples(sectionKey: string | null) {
+  return useQuery({
+    queryKey: ["section-examples", sectionKey],
+    queryFn: () => apiFetch<{ examples: ExampleSource[] }>(`/api/sections/${sectionKey}/examples`),
+    enabled: !!sectionKey,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export async function downloadExampleSource(url: string, filename: string): Promise<void> {
+  const blob = await apiBlob(url);
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export function useDeleteSection(meetingId: number) {

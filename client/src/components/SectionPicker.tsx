@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Plus, Search, X } from "lucide-react";
-import { useSectionTemplates, type SectionTemplate } from "../lib/api.ts";
+import { Plus, Search, Trash2, X } from "lucide-react";
+import { useDeleteSectionTemplate, useSectionTemplates, type SectionTemplate } from "../lib/api.ts";
 
 export function SectionPicker({
   open,
@@ -16,6 +16,7 @@ export function SectionPicker({
   busyKey?: string | null;
 }) {
   const q = useSectionTemplates();
+  const delTemplate = useDeleteSectionTemplate();
   const [search, setSearch] = useState("");
 
   const excludeSet = useMemo(() => new Set(excludeKeys ?? []), [excludeKeys]);
@@ -107,14 +108,29 @@ export function SectionPicker({
                       </p>
                     )}
                   </div>
-                  <button
-                    onClick={() => onPick(s)}
-                    disabled={alreadyAdded || busy}
-                    className="shrink-0 flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-                  >
-                    <Plus className="size-3.5" />
-                    {alreadyAdded ? "Added" : busy ? "Adding…" : "Add"}
-                  </button>
+                  <div className="shrink-0 flex items-center gap-1">
+                    {s.custom_id != null && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete saved template "${s.title}"?`)) {
+                            delTemplate.mutate(s.custom_id!);
+                          }
+                        }}
+                        className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete saved template"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onPick(s)}
+                      disabled={alreadyAdded || busy}
+                      className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                    >
+                      <Plus className="size-3.5" />
+                      {alreadyAdded ? "Added" : busy ? "Adding…" : "Add"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );

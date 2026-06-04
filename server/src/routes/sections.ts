@@ -6,9 +6,34 @@ import { buildPrompt, type PromptContext } from "../services/prompts/index.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import type { ParsedSection, ParsedTemplate } from "../services/template-parser.ts";
 import { buildTemplateVariables, fillTemplateText, slugifyVariable } from "../services/template-variables.ts";
+import { exampleFilePath, exampleSourcesFor } from "../services/example-sources.ts";
+import { existsSync } from "node:fs";
 
 const r = new Hono();
 r.use("*", requireAuth);
+
+// Static, sanitized example source files for a section (download references).
+r.get("/sections/:key/examples", (c) => {
+  const key = c.req.param("key");
+  const examples = exampleSourcesFor(key).map((e) => ({
+    label: e.label,
+    file: e.file,
+    download_url: `/api/example-sources/download?file=${encodeURIComponent(e.file)}`,
+  }));
+  return c.json({ examples });
+});
+
+r.get("/example-sources/download", (c) => {
+  const file = c.req.query("file") ?? "";
+  const path = exampleFilePath(file);
+  if (!path || !existsSync(path)) return c.json({ error: "not found" }, 404);
+  return new Response(Bun.file(path), {
+    headers: {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="${file.replace(/[^A-Za-z0-9._ ()-]+/g, "_")}"`,
+    },
+  });
+});
 
 type SectionRow = {
   id: number;

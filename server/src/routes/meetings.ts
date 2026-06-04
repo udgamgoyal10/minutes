@@ -31,6 +31,39 @@ type MeetingRow = {
   updated_at: string;
 };
 
+type CustomTemplateRow = {
+  id: number;
+  user_id: number;
+  key: string;
+  title: string;
+  body_text: string;
+  required_sources_json: string;
+  created_at: string;
+};
+
+function parseStringArray(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function customToSection(row: CustomTemplateRow) {
+  return {
+    key: row.key,
+    title: row.title,
+    body_text: row.body_text,
+    placeholders: [] as { token: string; raw: string }[],
+    required_sources: parseStringArray(row.required_sources_json),
+    template_id: -1,
+    template_slug: "custom",
+    template_title: "My templates",
+    custom_id: row.id,
+  };
+}
+
 r.get("/organizations", (c) => {
   const rows = db.query<OrgRow, []>("SELECT id, slug, name FROM organizations ORDER BY name").all();
   return c.json({ organizations: rows });
@@ -52,6 +85,7 @@ r.get("/templates", (c) => {
 });
 
 r.get("/section-templates", (c) => {
+  const user = c.get("user");
   const rows = db.query<TemplateRow, []>(
     "SELECT id, organization_id, slug, title, docx_path, parsed_json FROM meeting_templates ORDER BY slug",
   ).all();
@@ -65,7 +99,28 @@ r.get("/section-templates", (c) => {
     template_id: number;
     template_slug: string;
     template_title: string;
+    custom_id?: number;
   }> = [];
+
+  // User-saved custom templates first, so they are easy to find.
+  const customRows = db.query<CustomTemplateRow, [number]>(
+    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE user_id = ? ORDER BY created_at DESC",
+  ).all(user.id);
+  for (const row of customRows) {
+    seen.add(normalizeSectionTitle(row.title));
+    sections.push({
+      key: row.key,
+      title: row.title,
+      body_text: row.body_text,
+      placeholders: [],
+      required_sources: parseStringArray(row.required_sources_json),
+      template_id: -1,
+      template_slug: "custom",
+      template_title: "My templates",
+      custom_id: row.id,
+    });
+  }
+
   for (const row of rows) {
     const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
     for (const section of parsed.sections) {
@@ -88,6 +143,37 @@ r.get("/section-templates", (c) => {
     }
   }
   return c.json({ sections });
+});
+
+r.post("/section-templates", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json().catch(() => ({})) as Partial<{
+    title: string;
+    body_text: string;
+    required_sources: string[];
+  }>;
+  const title = body.title?.trim();
+  if (!title) return c.json({ error: "title required" }, 400);
+  const key = normalizeSectionTitle(title) || `custom-${Date.now()}`;
+  const required = Array.isArray(body.required_sources)
+    ? body.required_sources.filter((x): x is string => typeof x === "string")
+    : [];
+  const res = db.run(
+    `INSERT INTO custom_section_templates (user_id, key, title, body_text, required_sources_json)
+     VALUES (?, ?, ?, ?, ?)`,
+    [user.id, key, title, body.body_text ?? "", JSON.stringify(required)],
+  );
+  const row = db.query<CustomTemplateRow, [number]>(
+    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ?",
+  ).get(Number(res.lastInsertRowid));
+  return c.json({ template: row ? customToSection(row) : null }, 201);
+});
+
+r.delete("/section-templates/custom/:id", (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  db.run("DELETE FROM custom_section_templates WHERE id = ? AND user_id = ?", [id, user.id]);
+  return c.json({ ok: true });
 });
 
 r.get("/meetings", (c) => {

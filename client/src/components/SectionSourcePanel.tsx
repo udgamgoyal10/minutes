@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { Download, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import {
+  downloadExampleSource,
   useDeleteSource,
+  useSectionExamples,
   useSources,
   useUploadSources,
   type SectionDraft,
@@ -15,8 +17,31 @@ export function SectionSourcePanel({
   section: SectionDraft;
 }) {
   const sourcesQ = useSources(meetingId, section.section_key);
+  const examplesQ = useSectionExamples(section.section_key);
   const upload = useUploadSources(meetingId);
   const del = useDeleteSource(meetingId);
+  const examples = examplesQ.data?.examples ?? [];
+
+  const examplesBlock = examples.length > 0 && (
+    <div className="bg-sky-50 border border-sky-200 rounded-md p-3">
+      <p className="text-xs font-medium text-sky-900 mb-1">Example source files (sanitized)</p>
+      <p className="text-[11px] text-sky-700 mb-2">
+        Download a reference to see the expected format for this section's sources.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {examples.map((ex) => (
+          <button
+            key={ex.file}
+            type="button"
+            onClick={() => downloadExampleSource(ex.download_url, ex.file)}
+            className="flex items-center gap-1 text-xs bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 rounded px-2 py-1"
+          >
+            <Download className="size-3.5" /> {ex.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   const recommended = section.required_sources;
   const [label, setLabel] = useState(recommended[0] ?? "");
@@ -41,14 +66,16 @@ export function SectionSourcePanel({
 
   if (recommended.length === 0) {
     return (
-      <p className="text-xs text-slate-400">
-        No specific source needed for this section.
-      </p>
+      <div className="space-y-3">
+        {examplesBlock}
+        <p className="text-xs text-slate-400">No specific source needed for this section.</p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {examplesBlock}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {recommended.map((source) => (
           <button

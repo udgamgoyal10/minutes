@@ -817,6 +817,24 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: 15,
+    name: "custom_section_templates",
+    up: () => {
+      db.exec(`
+        CREATE TABLE custom_section_templates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body_text TEXT NOT NULL DEFAULT '',
+          required_sources_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_custom_section_templates_user ON custom_section_templates(user_id);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

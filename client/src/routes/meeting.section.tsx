@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Loader2, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, FilePlus, Loader2, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import {
   useCreateSection,
+  useCreateSectionTemplate,
   useDeleteSection,
   useGenerateSection,
   useMeeting,
@@ -35,6 +36,7 @@ export function SectionPage() {
   const gen = useGenerateSection(meetingId);
   const revert = useRevertSection(meetingId);
   const createSection = useCreateSection(meetingId);
+  const createTemplate = useCreateSectionTemplate();
   const deleteSection = useDeleteSection(meetingId);
   const reorder = useReorderSections(meetingId);
 
@@ -98,6 +100,28 @@ export function SectionPage() {
             className="w-full flex items-center justify-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md py-2 text-sm font-medium"
           >
             <Plus className="size-4" /> Add section
+          </button>
+          <button
+            onClick={async () => {
+              const title = window.prompt("Title for the new blank section:")?.trim();
+              if (!title) return;
+              const result = await createSection.mutateAsync({
+                title,
+                content_md: "",
+                template_body_text: "",
+                mode: "ai",
+              });
+              const created = result.section;
+              if (created) {
+                navigate({
+                  to: "/m/$id/section/$key",
+                  params: { id: String(meetingId), key: created.section_key },
+                });
+              }
+            }}
+            className="w-full flex items-center justify-center gap-1 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-md py-2 text-sm font-medium"
+          >
+            <FilePlus className="size-4" /> New blank section
           </button>
           {sections.map((s, index) => {
             const isActive = s.section_key === sectionKey;
@@ -393,13 +417,35 @@ export function SectionPage() {
           </div>
 
           <div className="mt-6 flex justify-between items-center">
-            <button
-              onClick={() => update.mutate({ key: section.section_key, content_md: content })}
-              disabled={update.isPending}
-              className="text-sm text-slate-700 underline"
-            >
-              Save draft
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => update.mutate({ key: section.section_key, content_md: content })}
+                disabled={update.isPending}
+                className="text-sm text-slate-700 underline"
+              >
+                Save draft
+              </button>
+              <button
+                onClick={async () => {
+                  const title = window.prompt(
+                    "Save the current text as a reusable section template. Template name:",
+                    section.title,
+                  )?.trim();
+                  if (!title) return;
+                  await createTemplate.mutateAsync({
+                    title,
+                    body_text: content,
+                    required_sources: section.required_sources,
+                  });
+                  window.alert("Saved to \u201cMy templates\u201d. Add it any time from \u201cAdd section\u201d.");
+                }}
+                disabled={createTemplate.isPending}
+                className="text-sm text-slate-700 hover:text-brand-700 flex items-center gap-1"
+              >
+                {createTemplate.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                Save as template
+              </button>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={async () => {
