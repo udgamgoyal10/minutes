@@ -9,8 +9,7 @@ export const claudeAdapter: Adapter = {
   async listModels() {
     // No public list endpoint that works without account permissions —
     // surface a curated set keyed off the configured default.
-    return [env.anthropic.model, "claude-sonnet-4-6", "claude-opus-4-6", "claude-3-5-haiku-latest"]
-      .filter((v, i, a) => a.indexOf(v) === i);
+    return ["claude-sonnet-4-6"];
   },
   async generate(opts: GenerateOpts, onChunk?: StreamHandler): Promise<GenerateResult> {
     if (!env.anthropic.apiKey) throw new Error("ANTHROPIC_API_KEY not set");

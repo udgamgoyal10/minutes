@@ -11,6 +11,7 @@ export const SOURCE_CATALOG = [
   "Tally JKP Livestock Expenses Voucher Export",
   "Tally JKP Agricultural Expenses Voucher Export",
   "Tally JKP Garden Expenses Voucher Export",
+  "Reasons for Purchasing New Land",
 ] as const;
 
 const SECTION_SOURCE_MAP: Record<string, string[]> = {
@@ -30,6 +31,8 @@ const SECTION_SOURCE_MAP: Record<string, string[]> = {
     SOURCE_CATALOG[7],
   ],
   "review-of-significant-activities": [SOURCE_CATALOG[8]],
+  "purchase-and-sale-of-land-standing-instruction": [SOURCE_CATALOG[12]],
+  "purchase-and-sale-of-land": [SOURCE_CATALOG[12]],
 };
 
 export function inferRequiredSources(title: string, bodyText = ""): string[] {

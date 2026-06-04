@@ -16,13 +16,13 @@ export type ParsedSection = {
   title: string;
   bodyText: string;
   bodyXml: string;
-  placeholders: Array<{ token: string; raw: string }>;
+  placeholders: Array<{ token: string; raw: string; kind?: "text" | "date" }>;
 };
 
 export type ParsedTemplate = {
   title: string;
   preambleText: string;
-  globalPlaceholders: Array<{ token: string; raw: string }>;
+  globalPlaceholders: Array<{ token: string; raw: string; kind?: "text" | "date" }>;
   sections: ParsedSection[];
 };
 
@@ -164,6 +164,15 @@ export function useCreateMeeting() {
         method: "POST",
         body: JSON.stringify(vars),
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings"] }),
+  });
+}
+
+export function useDeleteMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<{ ok: true }>(`/api/meetings/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings"] }),
   });
 }

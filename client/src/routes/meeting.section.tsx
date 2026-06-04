@@ -93,12 +93,12 @@ export function SectionPage() {
                 <Link
                   to="/m/$id/section/$key"
                   params={{ id: String(meetingId), key: s.section_key }}
-                  className={`flex-1 min-w-0 px-3 py-2 text-sm ${
+                  className={`flex-1 min-w-0 px-3 py-2 text-sm break-words ${
                     isActive ? "text-brand-700" : "text-slate-700"
                   }`}
                 >
                   <span className="text-xs text-slate-400 mr-2">{s.ordinal}.</span>
-                  <span className="truncate">{s.title}</span>
+                  <span>{s.title}</span>
                   <StatusPill status={s.status} />
                 </Link>
                 <div className="flex flex-col items-center justify-center pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -248,12 +248,47 @@ export function SectionPage() {
               placeholder="Extra instructions (optional). Leave blank to use the generic template prompt."
               className="w-full border border-slate-300 rounded-md p-2 text-sm"
             />
-            <div className="flex gap-2 items-center justify-between">
-              <p className="text-xs text-slate-500">
-                Using <span className="font-medium text-slate-700">{provider || "—"}</span>
-                {model ? <span className="text-slate-500"> / {model}</span> : null}
-                <span className="text-slate-400"> (set in Setup)</span>
-              </p>
+            <div className="flex gap-2 items-center justify-between flex-wrap">
+              <div className="flex gap-2 items-center text-xs">
+                <select
+                  value={provider}
+                  onChange={(e) => {
+                    const p = e.target.value as ProviderInfo["id"] | "";
+                    setProvider(p);
+                    if (p) {
+                      const found = providersQ.data?.providers.find((x) => x.id === p);
+                      setModel(found?.models[0] ?? "");
+                    } else {
+                      setModel("");
+                    }
+                  }}
+                  className="border border-slate-300 rounded-md px-2 py-1 text-xs"
+                  title="Provider for this section"
+                >
+                  <option value="">(provider)</option>
+                  {(providersQ.data?.providers ?? [])
+                    .filter((p) => p.configured)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.id}
+                      </option>
+                    ))}
+                </select>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={!provider}
+                  className="border border-slate-300 rounded-md px-2 py-1 text-xs disabled:opacity-50 max-w-[14rem]"
+                  title="Model for this section"
+                >
+                  {(providersQ.data?.providers.find((p) => p.id === provider)?.models ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-slate-400">defaults from Setup</span>
+              </div>
               <div className="flex gap-2">
                 <button
                   onClick={async () => {

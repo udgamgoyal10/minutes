@@ -45,12 +45,12 @@ export const env = {
   },
   gemini: {
     apiKey: opt("GOOGLE_API_KEY"),
-    ocrModel: opt("GEMINI_OCR_MODEL", "gemini-3.5-flash"),
-    chatModel: opt("GEMINI_CHAT_MODEL", "gemini-3.5-flash-latest"),
+    ocrModel: opt("GEMINI_OCR_MODEL", "gemini-3.5"),
+    chatModel: opt("GEMINI_CHAT_MODEL", "gemini-3.5"),
   },
   openai: {
     apiKey: opt("OPENAI_API_KEY"),
-    model: opt("OPENAI_MODEL", "gpt-4o"),
+    model: opt("OPENAI_MODEL", "gpt-5.4"),
   },
 };
 

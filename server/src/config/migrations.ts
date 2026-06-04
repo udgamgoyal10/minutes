@@ -713,6 +713,110 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: 13,
+    name: "refresh_templates_v4_and_sources",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+      for (const template of templates) {
+        if (!existsSync(template.docx_path)) continue;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+      }
+
+      const rows = db.query<{
+        id: number;
+        title: string;
+        content_md: string;
+      }, []>("SELECT id, title, content_md FROM section_drafts").all();
+      const update = db.prepare(
+        "UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?",
+      );
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          update.run(JSON.stringify(inferRequiredSources(row.title, row.content_md)), row.id);
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 14,
+    name: "refresh_templates_v5_rosa_boilerplate",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+
+      for (const template of templates) {
+        if (!existsSync(template.docx_path)) continue;
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+
+        const existingStmt = db.query<{
+          id: number;
+          meeting_id: number;
+          section_key: string;
+          content_md: string;
+          template_body_text: string;
+          status: string;
+          last_ai_provider: string | null;
+        }, [number]>(
+          "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
+        );
+
+        const updateExisting = db.prepare(
+          `UPDATE section_drafts
+           SET title = ?,
+               content_md = ?,
+               template_body_text = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        );
+
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = existingStmt.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const existing = byKey.get(section.key);
+              if (!existing) continue;
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const canReplaceContent = !existing.content_md ||
+                existing.content_md === oldSection?.bodyText ||
+                existing.content_md === existing.template_body_text ||
+                (existing.status === "pending" && !existing.last_ai_provider);
+              updateExisting.run(
+                section.title,
+                canReplaceContent ? section.bodyText : existing.content_md,
+                section.bodyText,
+                existing.id,
+              );
+            }
+          }
+        });
+        tx();
+      }
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

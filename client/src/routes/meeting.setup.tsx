@@ -58,19 +58,35 @@ export function SetupPage() {
 
   const placeholders = template?.parsed.globalPlaceholders ?? [];
 
+  // Tokens that map a "date" placeholder to the derived day/month/year tokens
+  // the template actually contains. If any of the derived tokens are used by a
+  // selected section, surface the date input on the setup page.
+  const DATE_ALIASES: Record<string, string[]> = {
+    "adoption-of-annual-accounts-date": [
+      "adoption-of-annual-accounts-day",
+      "adoption-of-annual-accounts-month",
+      "adoption-of-annual-accounts-year",
+    ],
+  };
+
   const usedTokens = useMemo(() => {
     const used = new Set<string>();
-    const bodies = [
-      template?.parsed.preambleText ?? "",
-      ...(sectionsQ.data?.sections ?? []).map((s) => s.template_body_text ?? ""),
-    ];
+    const bodies = (sectionsQ.data?.sections ?? []).map((s) => s.template_body_text ?? "");
     for (const body of bodies) {
       for (const m of body.matchAll(/<([^<>\n]{2,200}?)>/g)) {
         used.add(slugToken(m[1] ?? ""));
       }
     }
     return used;
-  }, [template?.parsed.preambleText, sectionsQ.data?.sections]);
+  }, [sectionsQ.data?.sections]);
+
+  const visiblePlaceholders = useMemo(() => {
+    return placeholders.filter((p) => {
+      const aliases = DATE_ALIASES[p.token];
+      if (aliases) return aliases.some((a) => usedTokens.has(a));
+      return usedTokens.has(p.token);
+    });
+  }, [placeholders, usedTokens]);
 
   return (
     <div>
@@ -90,25 +106,21 @@ export function SetupPage() {
         <code className="mx-1">&lt;…&gt;</code> in the final document.
       </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 bg-white border border-slate-200 rounded-lg p-4">
-        {placeholders.length === 0 && <p className="text-slate-500 col-span-2">No placeholders detected.</p>}
-        {placeholders.map((p) => {
-          const used = usedTokens.has(p.token);
+        {visiblePlaceholders.length === 0 && (
+          <p className="text-slate-500 col-span-2">
+            No template variables are referenced by the sections currently selected.
+          </p>
+        )}
+        {visiblePlaceholders.map((p) => {
+          const isDate = p.kind === "date";
           return (
             <label key={p.token} className="block">
-              <span className="text-xs text-slate-600 flex items-center gap-2">
-                {p.raw}
-                {!used && (
-                  <span className="text-[10px] uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">
-                    not used in your sections
-                  </span>
-                )}
-              </span>
+              <span className="text-xs text-slate-600">{p.raw}</span>
               <input
+                type={isDate ? "date" : "text"}
                 value={vars[p.token] ?? ""}
                 onChange={(e) => setVars({ ...vars, [p.token]: e.target.value })}
-                className={`mt-1 w-full border rounded-md px-3 py-1.5 text-sm ${
-                  used ? "border-slate-300" : "border-slate-200 bg-slate-50 text-slate-500"
-                }`}
+                className="mt-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
               />
             </label>
           );
@@ -264,8 +276,8 @@ function SafetyBanner({ provider }: { provider: ProviderInfo["id"] | "" }) {
   const msg = isLocal
     ? "Local Ollama is safer for sensitive financial data, but slower."
     : provider
-      ? "Enterprise AI is fast and capable, but data leaves the network. Avoid uploading sources containing monetary values where possible."
-      : "Pick a provider below. Local Ollama is safer for sensitive data; enterprise providers are faster but data leaves the network.";
+      ? "Enterprise AI is fast and capable, but data leaves the network. To stay safe, avoid uploading sources that contain account information, bank statements, or trust details \u2014 stick to summaries and operational documents."
+      : "Pick a provider below. Local Ollama is safer for sensitive data; enterprise providers are faster but data leaves the network. Regardless of provider, avoid uploading sources that contain account information or trust details.";
   return (
     <div className={`flex gap-3 items-start border rounded-md p-3 text-sm ${cls}`}>
       <Icon className="size-5 mt-0.5" />

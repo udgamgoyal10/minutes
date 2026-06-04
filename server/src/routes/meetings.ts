@@ -205,6 +205,15 @@ function getMeeting(id: number, userId: number) {
   return row ? rowToMeeting(row) : null;
 }
 
+function normalizeSectionTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/&[a-z]+;/g, "")
+    .replace(/\bthe\b/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function rowToMeeting(row: MeetingRow) {
   return {
     id: row.id,

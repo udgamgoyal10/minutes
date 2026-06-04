@@ -9,7 +9,7 @@ export const openaiAdapter: Adapter = {
   isConfigured: () => Boolean(env.openai.apiKey),
   async listModels() {
     if (!env.openai.apiKey) return [];
-    return [env.openai.model, "gpt-4o", "gpt-4o-mini"].filter((v, i, a) => a.indexOf(v) === i);
+    return ["gpt-5.4"];
   },
   async generate(opts: GenerateOpts, _onChunk?: StreamHandler): Promise<GenerateResult> {
     if (!env.openai.apiKey) throw new Error("OPENAI_API_KEY not set");

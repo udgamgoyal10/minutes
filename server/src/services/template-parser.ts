@@ -10,7 +10,7 @@ import JSZip from "jszip";
 import { readFile } from "node:fs/promises";
 import { canonicalPlaceholder, mergePlaceholders, setupPlaceholders, slugifyVariable } from "./template-variables.ts";
 
-export type Placeholder = { token: string; raw: string };
+export type Placeholder = { token: string; raw: string; kind?: "text" | "date" };
 
 export type ParsedSection = {
   key: string;
@@ -102,6 +102,22 @@ function slugify(s: string): string {
   return slugifyVariable(s);
 }
 
+// Boilerplate lines we strip from the "Review of Significant Activities"
+// section template — these are placeholder instructions rather than wording
+// that should appear in the final minutes.
+const ROSA_BOILERPLATE_PATTERNS: RegExp[] = [
+  /^<\s*insert\s+resolution\s*>$/i,
+  /^<\s*description\s+of\s+activity\s+conducted\s+by\s+members\s+to\s+reach\s+resolution\s*>$/i,
+  /^["“]?\s*resolved\s+that\s*<\s*insert\s+resolution\s*>\s*["”]?$/i,
+  /^[\u2026.…]+\s*<\s*insert\s+additional\s+resolutions\s+as\s+separate\s+points\s+where\s+relevant\s*>$/i,
+];
+
+function isRosaBoilerplate(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return ROSA_BOILERPLATE_PATTERNS.some((re) => re.test(trimmed));
+}
+
 function removeIntroMeetingDateLines(lines: string[]): string[] {
   const out = [...lines];
   const start = out.findIndex((line) => /^meeting\s+dates\s*:?\s*$/i.test(line.trim()));
@@ -176,11 +192,16 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
   }
 
   regularAcc.forEach((s, idx) => {
-    const bodyParas = paragraphs.slice(s.paraIndexStart + 1, s.paraIndexEnd);
+    const rawBodyParas = paragraphs.slice(s.paraIndexStart + 1, s.paraIndexEnd);
+    const sectionKey = slugify(s.title) || `section-${idx + 1}`;
+    const bodyParas =
+      sectionKey === "review-of-significant-activities"
+        ? rawBodyParas.filter((p) => !isRosaBoilerplate(paragraphText(p)))
+        : rawBodyParas;
     const bodyXml = bodyParas.join("");
     const bodyText = bodyParas.map(paragraphText).join("\n").trim();
     sections.push({
-      key: slugify(s.title) || `section-${idx + 1}`,
+      key: sectionKey,
       ordinal: sections.length + 1,
       title: s.title,
       bodyText,

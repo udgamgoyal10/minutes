@@ -23,7 +23,9 @@ export const SYSTEM_BASE =
   "If a placeholder cannot be filled from the provided sources, leave the placeholder text (e.g. <Trustee 1>) intact " +
   "and continue. Do not include monetary amounts unless they are explicitly present in the sources. " +
   "If the section is blank or the user requests a new resolution, draft suitable meeting-minutes text from scratch using only the instruction, template style, variables, and sources available. " +
-  "Return well-formed markdown with paragraphs and bullet lists where the template uses them.";
+  "Output must be Word-compatible plain prose. Use ONLY this minimal markdown subset: paragraphs separated by blank lines, bullet items starting with '- ', **bold** and *italic* inline emphasis. " +
+  "Do NOT use markdown headings (#, ##), numbered lists (1.), tables, blockquotes (>), code fences (```), inline code backticks, or horizontal rules. " +
+  "Write resolutions as plain paragraphs in the form: RESOLVED THAT \u2026 (no italics, no quotes around the whole resolution).";
 
 const STYLE_GUIDE =
   "Meeting-minutes style reference:\n" +
@@ -37,18 +39,60 @@ const CUSTOM: Record<string, (ctx: PromptContext) => string> = {
   "review-of-significant-activities": (ctx) =>
     `Section: ${ctx.section.title}\n\n` +
     "Summarize significant trust activities NOT already covered by earlier sections. " +
-    "Cluster common expenses, omit specific dates and monetary values, and present as a clean " +
-    "bullet list followed by any resolutions the board passed. Use 'RESOLVED THAT …' formatting for resolutions.\n\n" +
+    "Focus EXCLUSIVELY on expense entries greater than \u20b91,00,000 (one lakh). " +
+    "Ignore everything at or below \u20b91,00,000. If no expense in the sources exceeds one lakh, write a single short sentence stating that no significant (> \u20b91 L) expenses were recorded in the period. " +
+    "Cluster the > \u20b91 L items by activity, omit specific rupee values in the narrative, and present as a clean bullet list followed by any resolutions the board passed. " +
+    "Use 'RESOLVED THAT \u2026' formatting for resolutions.\n\n" +
     sourcesBlock(ctx) +
     placeholderBlock(ctx),
+  "maintenance-of-agricultural-fields": (ctx) => expensePrompt(ctx, "agricultural"),
+  "maintenance-of-the-agricultural-fields": (ctx) => expensePrompt(ctx, "agricultural"),
+  "maintenance-of-livestock": (ctx) => expensePrompt(ctx, "livestock"),
+  "livestock-expenses": (ctx) => expensePrompt(ctx, "livestock"),
+  "maintenance-of-gardens": (ctx) => expensePrompt(ctx, "garden"),
+  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": (ctx) =>
+    expensePrompt(ctx, "garden"),
   "investment-chart": (ctx) =>
     `Section: ${ctx.section.title}\n\n` +
     "Fill the bullet structure exactly as in the template. For each placeholder of the form " +
     "<insert fund names here where …>, list only fund names that appear in the sources. " +
     "Do NOT include any rupee amounts.\n\n" +
+    "There are EXACTLY five recognised fund types for this trust:\n" +
+    "  1. Poor Relief Fund\n" +
+    "  2. Corpus Endowment\n" +
+    "  3. Corpus\n" +
+    "  4. Hospital\n" +
+    "  5. General Fund\n" +
+    "When mentioning which funds had new investments, received interest, or had premature redemptions, you MUST use ONLY these exact names. " +
+    "Map any synonyms / abbreviations in the sources onto these five names; if a source mentions a fund that does not match any of the five, omit it rather than inventing a new fund name.\n\n" +
+    "When summarising the AI overview / narrative bullets for this section you MUST cover, in plain English and only when the sources support it:\n" +
+    "  - which of the five funds were used to make new investments (i.e., source of funds) and into which schemes/instruments those investments were placed,\n" +
+    "  - any premature redemption / pre-mature withdrawal of investments that occurred during the period (which of the five funds was affected),\n" +
+    "  - interest received on existing investments (mention which of the five funds received interest and the schemes that paid interest; do NOT list rupee amounts),\n" +
+    "  - any investments that matured during the period and what happened to the proceeds.\n" +
+    "If the sources are silent on one of these aspects, omit the corresponding bullet rather than inventing data.\n\n" +
     sourcesBlock(ctx) +
     placeholderBlock(ctx),
 };
+
+function expensePrompt(ctx: PromptContext, kind: "agricultural" | "livestock" | "garden"): string {
+  const label =
+    kind === "agricultural"
+      ? "agricultural fields"
+      : kind === "livestock"
+        ? "livestock"
+        : "gardens";
+  return (
+    `Section: ${ctx.section.title}\n\n` +
+    `Summarise expenses incurred for maintenance of ${label} during the period.\n\n` +
+    "Focus rules (apply in this order):\n" +
+    "  1. If ANY expense in the sources is greater than \u20b91,00,000 (one lakh), focus the narrative ONLY on those > \u20b91 L items \u2014 describe what the money was spent on, but do NOT print rupee amounts.\n" +
+    "  2. If NO expense exceeds one lakh, fall back to summarising across all expenses, ordered by highest value first and by most common category. Cluster small recurring entries; do NOT print rupee amounts.\n\n" +
+    "Present the result as a short clean bullet list. Add any resolution paragraphs the sources support afterwards using 'RESOLVED THAT \u2026' formatting.\n\n" +
+    sourcesBlock(ctx) +
+    placeholderBlock(ctx)
+  );
+}
 
 function sourcesBlock(ctx: PromptContext): string {
   if (!ctx.sources.length) return "Sources: (none provided)\n\n";

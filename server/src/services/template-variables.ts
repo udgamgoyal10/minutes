@@ -11,10 +11,25 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Caretaker of Agriculture",
   "Date of Janmashtami",
   "Medical Superintendent of JKC Mangarh",
-  "Adoption of Annual Accounts day",
-  "Adoption of Annual Accounts month",
-  "Adoption of Annual Accounts year",
 ] as const;
+
+// Variables that the user fills in as a single date; the day/month/year
+// placeholders inside the template body are derived automatically from it.
+export const DATE_TEMPLATE_VARIABLES: Array<{
+  token: string;
+  raw: string;
+  dayToken: string;
+  monthToken: string;
+  yearToken: string;
+}> = [
+  {
+    token: "adoption-of-annual-accounts-date",
+    raw: "Adoption of Annual Accounts Date",
+    dayToken: "adoption-of-annual-accounts-day",
+    monthToken: "adoption-of-annual-accounts-month",
+    yearToken: "adoption-of-annual-accounts-year",
+  },
+];
 
 const HIDDEN_TEMPLATE_VARIABLES = new Set([
   "date-1",
@@ -25,6 +40,23 @@ const HIDDEN_TEMPLATE_VARIABLES = new Set([
   "day",
   "month",
   "year",
+  // Meeting-dates cover page (page 1) — managed via the Previous/This meeting
+  // date inputs and stripped from the export.
+  "meeting-date-1",
+  "meeting-date-2",
+  "meeting-date-3",
+  "meeting-date-4",
+  "meeting-date-5",
+  "meeting-date-1-location",
+  "meeting-date-2-location",
+  "meeting-date-3-location",
+  "meeting-date-4-location",
+  "meeting-date-5-location",
+  // Adoption-of-annual-accounts day/month/year are derived from the
+  // consolidated "Adoption of Annual Accounts Date" variable.
+  "adoption-of-annual-accounts-day",
+  "adoption-of-annual-accounts-month",
+  "adoption-of-annual-accounts-year",
 ]);
 
 const TRUSTEE_1_TOKEN = "trustee-1";
@@ -74,7 +106,17 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
   const additional = ADDITIONAL_TEMPLATE_VARIABLES.map((raw) => canonicalPlaceholder(raw)).filter(
     (p): p is Placeholder => p != null,
   );
-  return mergePlaceholders([...globalPlaceholders, ...allPlaceholders.filter((p) => additional.some((a) => a.token === p.token)), ...additional]);
+  const dateVars: Placeholder[] = DATE_TEMPLATE_VARIABLES.map((d) => ({
+    token: d.token,
+    raw: d.raw,
+    kind: "date",
+  }));
+  return mergePlaceholders([
+    ...globalPlaceholders,
+    ...allPlaceholders.filter((p) => additional.some((a) => a.token === p.token)),
+    ...additional,
+    ...dateVars,
+  ]);
 }
 
 export function buildTemplateVariables(args: {
@@ -100,6 +142,17 @@ export function buildTemplateVariables(args: {
       out.day = parts.day;
       out.month = parts.month;
       out.year = parts.year;
+    }
+  }
+  // Expand each registered "date" variable into its day / month / year tokens
+  // so the .docx renders correctly without exposing three separate inputs.
+  for (const date of DATE_TEMPLATE_VARIABLES) {
+    const raw = out[date.token];
+    const parts = dateParts(raw);
+    if (parts) {
+      out[date.dayToken] = parts.day;
+      out[date.monthToken] = parts.month;
+      out[date.yearToken] = parts.year;
     }
   }
   return out;
