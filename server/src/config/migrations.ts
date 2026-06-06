@@ -835,6 +835,45 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: 16,
+    name: "refresh_templates_v6_required_vars",
+    up: async () => {
+      // Re-parse templates so parsed_json reflects the current parser (clean,
+      // de-duplicated global placeholders + always-present required variables).
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+      for (const template of templates) {
+        if (!existsSync(template.docx_path)) continue;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+      }
+    },
+  },
+  {
+    id: 17,
+    name: "template_variable_values",
+    up: () => {
+      db.exec(`
+        CREATE TABLE template_variable_values (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token TEXT NOT NULL,
+          value TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(user_id, token, value)
+        );
+        CREATE INDEX idx_template_variable_values_user_token
+          ON template_variable_values(user_id, token);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

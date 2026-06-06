@@ -19,10 +19,12 @@ export type ParsedSection = {
   placeholders: Array<{ token: string; raw: string; kind?: "text" | "date" }>;
 };
 
+export type Placeholder = { token: string; raw: string; kind?: "text" | "date"; required?: boolean };
+
 export type ParsedTemplate = {
   title: string;
   preambleText: string;
-  globalPlaceholders: Array<{ token: string; raw: string; kind?: "text" | "date" }>;
+  globalPlaceholders: Placeholder[];
   sections: ParsedSection[];
 };
 
@@ -324,12 +326,48 @@ export function useCreateSectionTemplate() {
   });
 }
 
+export function useUpdateSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { customId: number; title?: string; body_text?: string; required_sources?: string[] }) =>
+      apiFetch<{ template: SectionTemplate }>(`/api/section-templates/custom/${vars.customId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: vars.title,
+          body_text: vars.body_text,
+          required_sources: vars.required_sources,
+        }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
 export function useDeleteSectionTemplate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (customId: number) =>
       apiFetch<{ ok: true }>(`/api/section-templates/custom/${customId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
+export function useVariableValues() {
+  return useQuery({
+    queryKey: ["variable-values"],
+    queryFn: () => apiFetch<{ values: Record<string, string[]> }>(`/api/variable-values`),
+    staleTime: 60_000,
+  });
+}
+
+export function useSaveVariableValues() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entries: Array<{ token: string; value: string }>) =>
+      apiFetch<{ values: Record<string, string[]> }>(`/api/variable-values`, {
+        method: "POST",
+        body: JSON.stringify({ entries }),
+      }),
+    onSuccess: (data) => qc.setQueryData(["variable-values"], data),
   });
 }
 

@@ -1,5 +1,17 @@
 import type { Placeholder } from "./template-parser.ts";
 
+// Variables that are always shown on the setup page for every new meeting,
+// regardless of which sections are currently selected. These identify the
+// trust and its office bearers and are needed by nearly every section.
+export const REQUIRED_TEMPLATE_VARIABLES: Array<{ token: string; raw: string }> = [
+  { token: "trust-name", raw: "Trust Name" },
+  { token: "trustee-1", raw: "Trustee 1 / Managing Trustee" },
+  { token: "trustee-2", raw: "Trustee 2" },
+  { token: "trustee-3", raw: "Trustee 3" },
+  { token: "secretary", raw: "Secretary" },
+  { token: "treasurer", raw: "Treasurer" },
+];
+
 export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Daan Peti Individual 1",
   "Daan Peti Individual 2",
@@ -126,7 +138,15 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
   const additionalTyped = additional.map((p) =>
     SIMPLE_DATE_TOKENS.has(p.token) ? { ...p, kind: "date" as const } : p,
   );
+  // Required variables always lead the list and carry the `required` flag so the
+  // setup page can always surface them, even when no section references them.
+  const required: Placeholder[] = REQUIRED_TEMPLATE_VARIABLES.map((v) => ({
+    token: v.token,
+    raw: v.raw,
+    required: true,
+  }));
   return mergePlaceholders([
+    ...required,
     ...globalPlaceholders,
     ...allPlaceholders.filter((p) => additionalTyped.some((a) => a.token === p.token)),
     ...additionalTyped,

@@ -10,7 +10,7 @@ import JSZip from "jszip";
 import { readFile } from "node:fs/promises";
 import { canonicalPlaceholder, mergePlaceholders, setupPlaceholders, slugifyVariable } from "./template-variables.ts";
 
-export type Placeholder = { token: string; raw: string; kind?: "text" | "date" };
+export type Placeholder = { token: string; raw: string; kind?: "text" | "date"; required?: boolean };
 
 export type ParsedSection = {
   key: string;

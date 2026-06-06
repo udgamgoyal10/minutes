@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, FilePlus, Loader2, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import {
@@ -43,6 +43,15 @@ export function SectionPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyAddKey, setBusyAddKey] = useState<string | null>(null);
 
+  // Per-section AI generation tracking so revisions in different sections can run
+  // in parallel, and a completing run only fills the section it was started on.
+  const [pendingKeys, setPendingKeys] = useState<Record<string, boolean>>({});
+  const [genErrors, setGenErrors] = useState<Record<string, string>>({});
+  const currentKeyRef = useRef(sectionKey);
+  useEffect(() => {
+    currentKeyRef.current = sectionKey;
+  }, [sectionKey]);
+
   const sections = sectionsQ.data?.sections ?? [];
   const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
   const idx = sections.findIndex((s) => s.section_key === sectionKey);
@@ -58,6 +67,9 @@ export function SectionPage() {
 
   const promptQ = useSectionPrompt(meetingId, sectionKey);
   const defaultPrompt = promptQ.data?.prompt ?? "";
+
+  const isEnterpriseProvider =
+    providersQ.data?.providers.find((p) => p.id === provider)?.category === "enterprise";
 
   useEffect(() => {
     if (section) setContent(section.preview_md || section.content_md);
@@ -142,6 +154,9 @@ export function SectionPage() {
                   <span className="text-xs text-slate-400 mr-2">{s.ordinal}.</span>
                   <span>{s.title}</span>
                   <StatusPill status={s.status} />
+                  {pendingKeys[s.section_key] && (
+                    <Loader2 className="inline size-3.5 ml-1 animate-spin text-brand-600 align-text-bottom" />
+                  )}
                 </Link>
                 <div className="flex flex-col items-center justify-center pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -365,8 +380,12 @@ export function SectionPage() {
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   disabled={!provider}
-                  className="border border-slate-300 rounded-md px-2 py-1 text-xs disabled:opacity-50 max-w-[14rem]"
-                  title="Model for this section"
+                  className={`border rounded-md px-2 py-1 text-xs disabled:opacity-50 max-w-[14rem] ${
+                    isEnterpriseProvider
+                      ? "border-yellow-400 bg-yellow-100 text-yellow-900"
+                      : "border-slate-300"
+                  }`}
+                  title={isEnterpriseProvider ? "Cloud model — data may leave the premises" : "Model for this section"}
                 >
                   {(providersQ.data?.providers.find((p) => p.id === provider)?.models ?? []).map((m) => (
                     <option key={m} value={m}>
@@ -374,7 +393,9 @@ export function SectionPage() {
                     </option>
                   ))}
                 </select>
-                <span className="text-slate-400">defaults from Setup</span>
+                <span className={isEnterpriseProvider ? "text-yellow-700" : "text-slate-400"}>
+                  {isEnterpriseProvider ? "data may leave premises" : "defaults from Setup"}
+                </span>
               </div>
               <div className="flex gap-2">
                 <button
@@ -391,26 +412,49 @@ export function SectionPage() {
                   Revert to template
                 </button>
                 <button
-                  disabled={!provider || gen.isPending}
+                  disabled={!provider || pendingKeys[section.section_key]}
                   onClick={async () => {
-                    const result = await gen.mutateAsync({
-                      key: section.section_key,
-                      provider: provider as ProviderInfo["id"],
-                      model,
-                      user_prompt: promptDirty ? undefined : userPrompt || undefined,
-                      prompt_override: promptDirty ? promptText : undefined,
+                    const key = section.section_key;
+                    const promptOverride = promptDirty ? promptText : undefined;
+                    const extraPrompt = promptDirty ? undefined : userPrompt || undefined;
+                    setGenErrors((m) => {
+                      const n = { ...m };
+                      delete n[key];
+                      return n;
                     });
-                    const next = result.section?.preview_md ?? result.section?.content_md;
-                    if (next != null) setContent(next);
+                    setPendingKeys((m) => ({ ...m, [key]: true }));
+                    try {
+                      const result = await gen.mutateAsync({
+                        key,
+                        provider: provider as ProviderInfo["id"],
+                        model,
+                        user_prompt: extraPrompt,
+                        prompt_override: promptOverride,
+                      });
+                      const next = result.section?.preview_md ?? result.section?.content_md;
+                      // Only fill the editor if the user is still on the section the
+                      // run was started for.
+                      if (next != null && currentKeyRef.current === key) setContent(next);
+                    } catch (err) {
+                      setGenErrors((m) => ({ ...m, [key]: (err as Error).message }));
+                    } finally {
+                      setPendingKeys((m) => {
+                        const n = { ...m };
+                        delete n[key];
+                        return n;
+                      });
+                    }
                   }}
                   className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
                 >
-                  {gen.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  {pendingKeys[section.section_key] ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   Generate
                 </button>
               </div>
             </div>
-            {gen.error && <p className="text-xs text-rose-600">{(gen.error as Error).message}</p>}
+            {genErrors[section.section_key] && (
+              <p className="text-xs text-rose-600">{genErrors[section.section_key]}</p>
+            )}
             <p className="text-xs text-slate-500">
               Sources available: {sourcesQ.data?.sources.length ?? 0}
             </p>

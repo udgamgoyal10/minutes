@@ -169,11 +169,83 @@ r.post("/section-templates", async (c) => {
   return c.json({ template: row ? customToSection(row) : null }, 201);
 });
 
+r.patch("/section-templates/custom/:id", async (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  const existing = db.query<CustomTemplateRow, [number, number]>(
+    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ? AND user_id = ?",
+  ).get(id, user.id);
+  if (!existing) return c.json({ error: "not found" }, 404);
+  const body = await c.req.json().catch(() => ({})) as Partial<{
+    title: string;
+    body_text: string;
+    required_sources: string[];
+  }>;
+  const title = body.title?.trim() || existing.title;
+  const key = normalizeSectionTitle(title) || existing.key;
+  const required = Array.isArray(body.required_sources)
+    ? body.required_sources.filter((x): x is string => typeof x === "string")
+    : parseStringArray(existing.required_sources_json);
+  db.run(
+    `UPDATE custom_section_templates
+     SET title = ?, key = ?, body_text = ?, required_sources_json = ?
+     WHERE id = ? AND user_id = ?`,
+    [title, key, body.body_text ?? existing.body_text, JSON.stringify(required), id, user.id],
+  );
+  const row = db.query<CustomTemplateRow, [number]>(
+    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ?",
+  ).get(id);
+  return c.json({ template: row ? customToSection(row) : null });
+});
+
 r.delete("/section-templates/custom/:id", (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   db.run("DELETE FROM custom_section_templates WHERE id = ? AND user_id = ?", [id, user.id]);
   return c.json({ ok: true });
+});
+
+type VariableValueRow = { token: string; value: string };
+
+r.get("/variable-values", (c) => {
+  const user = c.get("user");
+  const rows = db.query<VariableValueRow, [number]>(
+    "SELECT token, value FROM template_variable_values WHERE user_id = ? ORDER BY value COLLATE NOCASE ASC",
+  ).all(user.id);
+  const values: Record<string, string[]> = {};
+  for (const row of rows) {
+    (values[row.token] ??= []).push(row.value);
+  }
+  return c.json({ values });
+});
+
+r.post("/variable-values", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json().catch(() => ({})) as Partial<{
+    entries: Array<{ token: string; value: string }>;
+    token: string;
+    value: string;
+  }>;
+  const entries = body.entries ?? (body.token ? [{ token: body.token, value: body.value ?? "" }] : []);
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO template_variable_values (user_id, token, value) VALUES (?, ?, ?)",
+  );
+  const tx = db.transaction(() => {
+    for (const e of entries) {
+      const token = typeof e.token === "string" ? e.token.trim() : "";
+      const value = typeof e.value === "string" ? e.value.trim() : "";
+      if (token && value) insert.run(user.id, token, value);
+    }
+  });
+  tx();
+  const rows = db.query<VariableValueRow, [number]>(
+    "SELECT token, value FROM template_variable_values WHERE user_id = ? ORDER BY value COLLATE NOCASE ASC",
+  ).all(user.id);
+  const values: Record<string, string[]> = {};
+  for (const row of rows) {
+    (values[row.token] ??= []).push(row.value);
+  }
+  return c.json({ values });
 });
 
 r.get("/meetings", (c) => {

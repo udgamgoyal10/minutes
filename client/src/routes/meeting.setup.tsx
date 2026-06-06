@@ -6,9 +6,12 @@ import {
   useDeleteSection,
   useMeeting,
   useProviders,
+  useSaveVariableValues,
   useSections,
   useTemplates,
   useUpdateMeeting,
+  useVariableValues,
+  type Placeholder,
   type ProviderInfo,
   type SectionTemplate,
 } from "../lib/api.ts";
@@ -26,6 +29,8 @@ export function SetupPage() {
   const update = useUpdateMeeting(meetingId);
   const createSection = useCreateSection(meetingId);
   const deleteSection = useDeleteSection(meetingId);
+  const variableValuesQ = useVariableValues();
+  const saveVariableValues = useSaveVariableValues();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyAddKey, setBusyAddKey] = useState<string | null>(null);
 
@@ -87,11 +92,15 @@ export function SetupPage() {
 
   const visiblePlaceholders = useMemo(() => {
     return placeholders.filter((p) => {
+      // Required variables (trust + office bearers) always show for every meeting.
+      if (p.required) return true;
       const aliases = DATE_ALIASES[p.token];
       if (aliases) return aliases.some((a) => usedTokens.has(a));
       return usedTokens.has(p.token);
     });
   }, [placeholders, usedTokens]);
+
+  const savedValues = variableValuesQ.data?.values ?? {};
 
   return (
     <div>
@@ -116,20 +125,15 @@ export function SetupPage() {
             No template variables are referenced by the sections currently selected.
           </p>
         )}
-        {visiblePlaceholders.map((p) => {
-          const isDate = p.kind === "date";
-          return (
-            <label key={p.token} className="block">
-              <span className="text-xs text-slate-600">{p.raw}</span>
-              <input
-                type={isDate ? "date" : "text"}
-                value={vars[p.token] ?? ""}
-                onChange={(e) => setVars({ ...vars, [p.token]: e.target.value })}
-                className="mt-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
-              />
-            </label>
-          );
-        })}
+        {visiblePlaceholders.map((p) => (
+          <VariableField
+            key={p.token}
+            placeholder={p}
+            value={vars[p.token] ?? ""}
+            savedValues={savedValues[p.token] ?? []}
+            onChange={(v) => setVars({ ...vars, [p.token]: v })}
+          />
+        ))}
       </div>
 
       <h2 className="text-lg font-medium mt-8 mb-3">Sections</h2>
@@ -225,6 +229,13 @@ export function SetupPage() {
               ai_provider: provider || undefined,
               ai_model: model || undefined,
             });
+            // Persist non-empty text variable values so they can be reused as
+            // dropdown options on future meetings.
+            const entries = visiblePlaceholders
+              .filter((p) => p.kind !== "date")
+              .map((p) => ({ token: p.token, value: (vars[p.token] ?? "").trim() }))
+              .filter((e) => e.value.length > 0);
+            if (entries.length) await saveVariableValues.mutateAsync(entries).catch(() => {});
             navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } });
           }}
           disabled={update.isPending}
@@ -274,6 +285,99 @@ function DateField({
   );
 }
 
+function VariableField({
+  placeholder,
+  value,
+  savedValues,
+  onChange,
+}: {
+  placeholder: Placeholder;
+  value: string;
+  savedValues: string[];
+  onChange: (v: string) => void;
+}) {
+  const isDate = placeholder.kind === "date";
+  // "adding" mode reveals a free-text input to enter a brand-new value.
+  const [adding, setAdding] = useState(false);
+
+  const label = (
+    <span className="text-xs text-slate-600">
+      {placeholder.raw}
+      {placeholder.required && <span className="text-rose-500 ml-0.5">*</span>}
+    </span>
+  );
+
+  if (isDate) {
+    return (
+      <label className="block">
+        {label}
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="mt-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+        />
+      </label>
+    );
+  }
+
+  // Build the option list: saved values plus the current value if not saved yet.
+  const options = [...savedValues];
+  if (value && !options.includes(value)) options.unshift(value);
+  const useFreeText = adding || options.length === 0;
+
+  return (
+    <label className="block">
+      {label}
+      {useFreeText ? (
+        <div className="mt-1 flex gap-1">
+          <input
+            type="text"
+            autoFocus={adding}
+            value={value}
+            placeholder="Enter a value"
+            onChange={(e) => onChange(e.target.value)}
+            className="flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+          />
+          {options.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="text-xs text-slate-500 hover:text-slate-800 px-2 border border-slate-200 rounded-md"
+              title="Pick from saved values"
+            >
+              List
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="mt-1 flex gap-1">
+          <select
+            value={value}
+            onChange={(e) => {
+              if (e.target.value === "__add__") {
+                setAdding(true);
+                onChange("");
+              } else {
+                onChange(e.target.value);
+              }
+            }}
+            className="flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white"
+          >
+            <option value="">— select —</option>
+            {options.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+            <option value="__add__">+ Add new value…</option>
+          </select>
+        </div>
+      )}
+    </label>
+  );
+}
+
 function SafetyBanner({ provider }: { provider: ProviderInfo["id"] | "" }) {
   const isLocal = provider === "ollama";
   const Icon = isLocal ? ShieldCheck : AlertTriangle;
@@ -307,32 +411,45 @@ function ProviderPicker({
   onChangeModel: (m: string) => void;
 }) {
   const selected = providers.find((p) => p.id === provider && p.configured);
+  const enterpriseSelected = selected?.category === "enterprise";
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
       <div className="flex gap-2 flex-wrap">
-        {providers.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            disabled={!p.configured}
-            title={p.configured ? undefined : `Set the API key for ${p.id} in the server .env to enable it`}
-            onClick={() => {
-              if (!p.configured) return;
-              onChangeProvider(p.id);
-              onChangeModel(p.models[0] ?? "");
-            }}
-            className={`px-3 py-1.5 rounded-md text-sm border ${
-              provider === p.id
-                ? "border-brand-600 bg-brand-50 text-brand-700"
-                : p.configured
-                  ? "border-slate-300 text-slate-700 hover:bg-slate-50"
-                  : "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
-            }`}
-          >
-            {p.id} <span className="text-xs ml-1">({p.configured ? p.category : "needs API key"})</span>
-          </button>
-        ))}
+        {providers.map((p) => {
+          const isSelected = provider === p.id;
+          const isEnterprise = p.category === "enterprise";
+          return (
+            <button
+              key={p.id}
+              type="button"
+              disabled={!p.configured}
+              title={
+                p.configured
+                  ? isEnterprise
+                    ? "Cloud model — data may leave the premises"
+                    : undefined
+                  : `Set the API key for ${p.id} in the server .env to enable it`
+              }
+              onClick={() => {
+                if (!p.configured) return;
+                onChangeProvider(p.id);
+                onChangeModel(p.models[0] ?? "");
+              }}
+              className={`px-3 py-1.5 rounded-md text-sm border ${
+                isSelected
+                  ? isEnterprise
+                    ? "border-yellow-400 bg-yellow-100 text-yellow-900"
+                    : "border-brand-600 bg-brand-50 text-brand-700"
+                  : p.configured
+                    ? "border-slate-300 text-slate-700 hover:bg-slate-50"
+                    : "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
+              }`}
+            >
+              {p.id} <span className="text-xs ml-1">({p.configured ? p.category : "needs API key"})</span>
+            </button>
+          );
+        })}
       </div>
       {selected && (
         <label className="block">
@@ -340,7 +457,9 @@ function ProviderPicker({
           <select
             value={model}
             onChange={(e) => onChangeModel(e.target.value)}
-            className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+            className={`mt-1 w-full border rounded-md px-3 py-2 text-sm ${
+              enterpriseSelected ? "border-yellow-400 bg-yellow-100 text-yellow-900" : "border-slate-300"
+            }`}
           >
             {selected.models.map((m) => (
               <option key={m} value={m}>
@@ -348,6 +467,11 @@ function ProviderPicker({
               </option>
             ))}
           </select>
+          {enterpriseSelected && (
+            <span className="mt-1 block text-xs text-yellow-700">
+              Cloud model selected — data may leave the premises.
+            </span>
+          )}
         </label>
       )}
     </div>

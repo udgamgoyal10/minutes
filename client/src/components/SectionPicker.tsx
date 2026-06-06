@@ -1,6 +1,12 @@
 import { useMemo, useState } from "react";
-import { Plus, Search, Trash2, X } from "lucide-react";
-import { useDeleteSectionTemplate, useSectionTemplates, type SectionTemplate } from "../lib/api.ts";
+import { ArrowLeft, FilePlus, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import {
+  useCreateSectionTemplate,
+  useDeleteSectionTemplate,
+  useSectionTemplates,
+  useUpdateSectionTemplate,
+  type SectionTemplate,
+} from "../lib/api.ts";
 
 export function SectionPicker({
   open,
@@ -18,6 +24,8 @@ export function SectionPicker({
   const q = useSectionTemplates();
   const delTemplate = useDeleteSectionTemplate();
   const [search, setSearch] = useState("");
+  // null = browse list; "new" = create form; SectionTemplate = edit that custom template.
+  const [editing, setEditing] = useState<null | "new" | SectionTemplate>(null);
 
   const excludeSet = useMemo(() => new Set(excludeKeys ?? []), [excludeKeys]);
   const filtered = useMemo(() => {
@@ -39,18 +47,36 @@ export function SectionPicker({
 
   if (!open) return null;
 
+  if (editing !== null) {
+    return (
+      <SectionTemplateEditor
+        existing={editing === "new" ? null : editing}
+        onCancel={() => setEditing(null)}
+        onClose={onClose}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <h2 className="text-lg font-semibold">Add section from catalog</h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
-            aria-label="Close"
-          >
-            <X className="size-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditing("new")}
+              className="flex items-center gap-1 text-sm border border-slate-300 hover:bg-slate-50 rounded-md px-3 py-1.5"
+            >
+              <FilePlus className="size-4" /> New section template
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
+              aria-label="Close"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
         <div className="px-5 py-3 border-b border-slate-100">
           <div className="relative">
@@ -110,17 +136,26 @@ export function SectionPicker({
                   </div>
                   <div className="shrink-0 flex items-center gap-1">
                     {s.custom_id != null && (
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete saved template "${s.title}"?`)) {
-                            delTemplate.mutate(s.custom_id!);
-                          }
-                        }}
-                        className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                        title="Delete saved template"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      <>
+                        <button
+                          onClick={() => setEditing(s)}
+                          className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-brand-600 hover:bg-brand-50"
+                          title="Edit saved template"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete saved template "${s.title}"?`)) {
+                              delTemplate.mutate(s.custom_id!);
+                            }
+                          }}
+                          className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                          title="Delete saved template"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={() => onPick(s)}
@@ -142,6 +177,134 @@ export function SectionPicker({
             className="text-sm text-slate-600 hover:text-slate-900"
           >
             Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionTemplateEditor({
+  existing,
+  onCancel,
+  onClose,
+}: {
+  existing: SectionTemplate | null;
+  onCancel: () => void;
+  onClose: () => void;
+}) {
+  const create = useCreateSectionTemplate();
+  const updateTemplate = useUpdateSectionTemplate();
+  const [title, setTitle] = useState(existing?.title ?? "");
+  const [body, setBody] = useState(existing?.body_text ?? "");
+  const [sources, setSources] = useState((existing?.required_sources ?? []).join(", "));
+  const [error, setError] = useState<string | null>(null);
+
+  const isEdit = existing != null;
+  const busy = create.isPending || updateTemplate.isPending;
+
+  async function save() {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setError("Title is required.");
+      return;
+    }
+    const required_sources = sources
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    try {
+      if (isEdit && existing?.custom_id != null) {
+        await updateTemplate.mutateAsync({
+          customId: existing.custom_id,
+          title: trimmed,
+          body_text: body,
+          required_sources,
+        });
+      } else {
+        await create.mutateAsync({ title: trimmed, body_text: body, required_sources });
+      }
+      onCancel();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onCancel}
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
+              aria-label="Back"
+            >
+              <ArrowLeft className="size-5" />
+            </button>
+            <h2 className="text-lg font-semibold">
+              {isEdit ? "Edit section template" : "New section template"}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
+            aria-label="Close"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Title</span>
+            <input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Approval of Annual Accounts"
+              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Body</span>
+            <p className="text-xs text-slate-500 mb-1">
+              Use <span className="font-mono">&lt;…&gt;</span> for template variables (e.g.
+              <span className="font-mono"> &lt;Trust Name&gt;</span>).
+            </p>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={12}
+              placeholder="Section wording…"
+              className="w-full border border-slate-300 rounded-md p-3 font-mono text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Required sources</span>
+            <p className="text-xs text-slate-500 mb-1">Comma-separated labels (optional).</p>
+            <input
+              value={sources}
+              onChange={(e) => setSources(e.target.value)}
+              placeholder="e.g. Investment Chart, Progress Report"
+              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+            />
+          </label>
+          {error && <p className="text-sm text-rose-600">{error}</p>}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={busy}
+            className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+          >
+            {busy && <Loader2 className="size-4 animate-spin" />}
+            {isEdit ? "Save changes" : "Create template"}
           </button>
         </div>
       </div>

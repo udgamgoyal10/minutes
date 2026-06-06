@@ -16,6 +16,26 @@ async function seedAdmin(): Promise<void> {
   console.log(`[seed] admin user created: ${env.adminEmail}`);
 }
 
+// Additional named users provisioned on startup. Idempotent: only created when
+// the username (stored in the email column) does not already exist.
+async function seedUsers(): Promise<void> {
+  const users: Array<{ username: string; password: string; role: string }> = [
+    { username: "dalpana", password: "gurudham1922", role: "admin" },
+  ];
+  for (const u of users) {
+    const existing = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE email = ?")
+      .get(u.username);
+    if (existing) continue;
+    const hash = await Bun.password.hash(u.password);
+    db.run("INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)", [
+      u.username,
+      hash,
+      u.role,
+    ]);
+    console.log(`[seed] user created: ${u.username}`);
+  }
+}
+
 function seedOrganizations(): void {
   const orgs = [{ slug: "jkp", name: "Jagadguru Kripalu Parishat — Bhakti Dham" }];
   for (const o of orgs) {
@@ -62,6 +82,7 @@ async function seedTemplates(): Promise<void> {
 
 export async function runSeeders(): Promise<void> {
   await seedAdmin();
+  await seedUsers();
   seedOrganizations();
   await seedTemplates();
 }
