@@ -1,5 +1,6 @@
 import { db } from "./db.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
+import { inferRequiredVariables } from "../services/template-variables.ts";
 import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -872,6 +873,36 @@ const migrations: Migration[] = [
         CREATE INDEX idx_template_variable_values_user_token
           ON template_variable_values(user_id, token);
       `);
+    },
+  },
+  {
+    id: 18,
+    name: "section_required_variables",
+    up: () => {
+      db.exec("ALTER TABLE section_drafts ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';");
+      db.exec("ALTER TABLE custom_section_templates ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';");
+
+      const drafts = db.query<{ id: number; title: string; template_body_text: string }, []>(
+        "SELECT id, title, template_body_text FROM section_drafts",
+      ).all();
+      const updateDraft = db.prepare(
+        "UPDATE section_drafts SET required_variables_json = ? WHERE id = ?",
+      );
+      const customs = db.query<{ id: number; title: string; body_text: string }, []>(
+        "SELECT id, title, body_text FROM custom_section_templates",
+      ).all();
+      const updateCustom = db.prepare(
+        "UPDATE custom_section_templates SET required_variables_json = ? WHERE id = ?",
+      );
+      const tx = db.transaction(() => {
+        for (const d of drafts) {
+          updateDraft.run(JSON.stringify(inferRequiredVariables(d.template_body_text ?? "", d.title)), d.id);
+        }
+        for (const cust of customs) {
+          updateCustom.run(JSON.stringify(inferRequiredVariables(cust.body_text ?? "", cust.title)), cust.id);
+        }
+      });
+      tx();
     },
   },
 ];

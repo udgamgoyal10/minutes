@@ -76,12 +76,15 @@ export function SetupPage() {
 
   const usedTokens = useMemo(() => {
     const used = new Set<string>();
-    // Scan both the section body AND title — some placeholders (e.g. Financial
-    // Year) only appear in the section heading.
-    const bodies = (sectionsQ.data?.sections ?? []).flatMap((s) => [
-      s.template_body_text ?? "",
-      s.title ?? "",
-    ]);
+    const sections = sectionsQ.data?.sections ?? [];
+    // Primary source of truth: the server-computed required_variables for each
+    // selected section (covers explicit per-section mappings too).
+    for (const s of sections) {
+      for (const token of s.required_variables ?? []) used.add(token);
+    }
+    // Fallback: also scan the section body AND title for <placeholders> — some
+    // placeholders (e.g. Financial Year) only appear in the section heading.
+    const bodies = sections.flatMap((s) => [s.template_body_text ?? "", s.title ?? ""]);
     for (const body of bodies) {
       for (const m of body.matchAll(/<([^<>\n]{2,200}?)>/g)) {
         used.add(slugToken(m[1] ?? ""));
@@ -202,6 +205,7 @@ export function SetupPage() {
               template_body_text: s.body_text,
               content_md: s.body_text,
               required_sources: s.required_sources,
+              required_variables: s.required_variables,
               mode: "template",
             });
           } finally {
@@ -321,10 +325,14 @@ function VariableField({
     );
   }
 
-  // Build the option list: saved values plus the current value if not saved yet.
+  // Free-text mode depends ONLY on whether saved values exist (and the explicit
+  // "add new" toggle). It must NOT depend on the current value, otherwise typing
+  // the first character would flip the field into a dropdown mid-keystroke.
+  const useFreeText = adding || savedValues.length === 0;
+  // Options shown in the dropdown: saved values plus the current value if it is
+  // not already one of them (so a previously-entered value stays selected).
   const options = [...savedValues];
   if (value && !options.includes(value)) options.unshift(value);
-  const useFreeText = adding || options.length === 0;
 
   return (
     <label className="block">

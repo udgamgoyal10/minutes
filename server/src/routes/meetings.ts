@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { db } from "../config/db.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
+import { inferRequiredVariables, setupVariableCatalog } from "../services/template-variables.ts";
 import type { ParsedTemplate } from "../services/template-parser.ts";
 
 const r = new Hono();
@@ -38,6 +39,7 @@ type CustomTemplateRow = {
   title: string;
   body_text: string;
   required_sources_json: string;
+  required_variables_json: string | null;
   created_at: string;
 };
 
@@ -57,12 +59,17 @@ function customToSection(row: CustomTemplateRow) {
     body_text: row.body_text,
     placeholders: [] as { token: string; raw: string }[],
     required_sources: parseStringArray(row.required_sources_json),
+    required_variables: parseStringArray(row.required_variables_json ?? "[]"),
     template_id: -1,
     template_slug: "custom",
     template_title: "My templates",
     custom_id: row.id,
   };
 }
+
+r.get("/template-variables", (c) => {
+  return c.json({ variables: setupVariableCatalog() });
+});
 
 r.get("/organizations", (c) => {
   const rows = db.query<OrgRow, []>("SELECT id, slug, name FROM organizations ORDER BY name").all();
@@ -96,6 +103,7 @@ r.get("/section-templates", (c) => {
     body_text: string;
     placeholders: { token: string; raw: string }[];
     required_sources: string[];
+    required_variables: string[];
     template_id: number;
     template_slug: string;
     template_title: string;
@@ -104,7 +112,7 @@ r.get("/section-templates", (c) => {
 
   // User-saved custom templates first, so they are easy to find.
   const customRows = db.query<CustomTemplateRow, [number]>(
-    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE user_id = ? ORDER BY created_at DESC",
+    "SELECT id, user_id, key, title, body_text, required_sources_json, required_variables_json, created_at FROM custom_section_templates WHERE user_id = ? ORDER BY created_at DESC",
   ).all(user.id);
   for (const row of customRows) {
     seen.add(normalizeSectionTitle(row.title));
@@ -114,6 +122,7 @@ r.get("/section-templates", (c) => {
       body_text: row.body_text,
       placeholders: [],
       required_sources: parseStringArray(row.required_sources_json),
+      required_variables: parseStringArray(row.required_variables_json ?? "[]"),
       template_id: -1,
       template_slug: "custom",
       template_title: "My templates",
@@ -136,6 +145,7 @@ r.get("/section-templates", (c) => {
         body_text: section.bodyText,
         placeholders: section.placeholders,
         required_sources: inferRequiredSources(section.title, section.bodyText),
+        required_variables: inferRequiredVariables(section.bodyText, section.title),
         template_id: row.id,
         template_slug: row.slug,
         template_title: row.title,
@@ -151,6 +161,7 @@ r.post("/section-templates", async (c) => {
     title: string;
     body_text: string;
     required_sources: string[];
+    required_variables: string[];
   }>;
   const title = body.title?.trim();
   if (!title) return c.json({ error: "title required" }, 400);
@@ -158,13 +169,16 @@ r.post("/section-templates", async (c) => {
   const required = Array.isArray(body.required_sources)
     ? body.required_sources.filter((x): x is string => typeof x === "string")
     : [];
+  const requiredVars = Array.isArray(body.required_variables)
+    ? body.required_variables.filter((x): x is string => typeof x === "string")
+    : inferRequiredVariables(body.body_text ?? "", title);
   const res = db.run(
-    `INSERT INTO custom_section_templates (user_id, key, title, body_text, required_sources_json)
-     VALUES (?, ?, ?, ?, ?)`,
-    [user.id, key, title, body.body_text ?? "", JSON.stringify(required)],
+    `INSERT INTO custom_section_templates (user_id, key, title, body_text, required_sources_json, required_variables_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [user.id, key, title, body.body_text ?? "", JSON.stringify(required), JSON.stringify(requiredVars)],
   );
   const row = db.query<CustomTemplateRow, [number]>(
-    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ?",
+    "SELECT id, user_id, key, title, body_text, required_sources_json, required_variables_json, created_at FROM custom_section_templates WHERE id = ?",
   ).get(Number(res.lastInsertRowid));
   return c.json({ template: row ? customToSection(row) : null }, 201);
 });
@@ -173,27 +187,31 @@ r.patch("/section-templates/custom/:id", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const existing = db.query<CustomTemplateRow, [number, number]>(
-    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ? AND user_id = ?",
+    "SELECT id, user_id, key, title, body_text, required_sources_json, required_variables_json, created_at FROM custom_section_templates WHERE id = ? AND user_id = ?",
   ).get(id, user.id);
   if (!existing) return c.json({ error: "not found" }, 404);
   const body = await c.req.json().catch(() => ({})) as Partial<{
     title: string;
     body_text: string;
     required_sources: string[];
+    required_variables: string[];
   }>;
   const title = body.title?.trim() || existing.title;
   const key = normalizeSectionTitle(title) || existing.key;
   const required = Array.isArray(body.required_sources)
     ? body.required_sources.filter((x): x is string => typeof x === "string")
     : parseStringArray(existing.required_sources_json);
+  const requiredVars = Array.isArray(body.required_variables)
+    ? body.required_variables.filter((x): x is string => typeof x === "string")
+    : parseStringArray(existing.required_variables_json ?? "[]");
   db.run(
     `UPDATE custom_section_templates
-     SET title = ?, key = ?, body_text = ?, required_sources_json = ?
+     SET title = ?, key = ?, body_text = ?, required_sources_json = ?, required_variables_json = ?
      WHERE id = ? AND user_id = ?`,
-    [title, key, body.body_text ?? existing.body_text, JSON.stringify(required), id, user.id],
+    [title, key, body.body_text ?? existing.body_text, JSON.stringify(required), JSON.stringify(requiredVars), id, user.id],
   );
   const row = db.query<CustomTemplateRow, [number]>(
-    "SELECT id, user_id, key, title, body_text, required_sources_json, created_at FROM custom_section_templates WHERE id = ?",
+    "SELECT id, user_id, key, title, body_text, required_sources_json, required_variables_json, created_at FROM custom_section_templates WHERE id = ?",
   ).get(id);
   return c.json({ template: row ? customToSection(row) : null });
 });
@@ -276,8 +294,8 @@ r.post("/meetings", async (c) => {
   // Seed empty section_drafts so the UI has rows to render
   const parsed = JSON.parse(tpl.parsed_json) as ParsedTemplate;
   const insertSec = db.prepare(
-    `INSERT INTO section_drafts (meeting_id, section_key, ordinal, title, content_md, status, mode, required_sources_json)
-     VALUES (?, ?, ?, ?, ?, 'pending', 'template', ?)`,
+    `INSERT INTO section_drafts (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json, required_variables_json)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', 'template', ?, ?)`,
   );
   const tx = db.transaction(() => {
     for (const s of parsed.sections) {
@@ -287,7 +305,9 @@ r.post("/meetings", async (c) => {
         s.ordinal,
         s.title,
         s.bodyText,
+        s.bodyText,
         JSON.stringify(inferRequiredSources(s.title, s.bodyText)),
+        JSON.stringify(inferRequiredVariables(s.bodyText, s.title)),
       );
     }
   });

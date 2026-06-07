@@ -43,10 +43,12 @@ export async function listAllProviders(): Promise<Array<{
   const FALLBACK_MODELS: Record<ProviderId, string[]> = {
     ollama: [],
     claude: ["claude-sonnet-4-6"],
-    gemini: ["gemini-3.5"],
+    gemini: [],
     openai: ["gpt-5.4"],
   };
-  for (const id of ["ollama", "claude", "gemini", "openai"] as ProviderId[]) {
+  // Gemini is intentionally excluded from the selectable chat providers (still
+  // used internally for OCR). Only Ollama, Claude, and OpenAI are offered.
+  for (const id of ["ollama", "claude", "openai"] as ProviderId[]) {
     const a = adapters[id];
     const configured = a.isConfigured();
     const models = configured ? await a.listModels().catch(() => []) : FALLBACK_MODELS[id];

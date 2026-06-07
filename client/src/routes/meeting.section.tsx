@@ -75,11 +75,13 @@ export function SectionPage() {
     if (section) setContent(section.preview_md || section.content_md);
   }, [section?.id, section?.preview_md]);
 
-  // Reset the editable prompt whenever the section changes or a fresh default
-  // arrives, unless the user has manually edited it.
+  // Reset the editable prompt and the per-section "Revise with AI" instruction
+  // whenever the section changes, so text typed for one section never bleeds
+  // into another.
   useEffect(() => {
     setPromptDirty(false);
     setShowPrompt(false);
+    setUserPrompt("");
   }, [sectionKey]);
 
   useEffect(() => {
@@ -227,6 +229,7 @@ export function SectionPage() {
                 template_body_text: s.body_text,
                 content_md: s.body_text,
                 required_sources: s.required_sources,
+                required_variables: s.required_variables,
                 mode: "template",
               });
               setPickerOpen(false);
@@ -480,6 +483,7 @@ export function SectionPage() {
                     title,
                     body_text: content,
                     required_sources: section.required_sources,
+                    required_variables: section.required_variables,
                   });
                   window.alert("Saved to \u201cMy templates\u201d. Add it any time from \u201cAdd section\u201d.");
                 }}

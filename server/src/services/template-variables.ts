@@ -21,10 +21,19 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Income Tax Representative",
   "Caretaker of Livestock",
   "Caretaker of Agriculture",
+  "Caretaker of Gardens",
   "Date of Janmashtami",
   "Medical Superintendent of JKC Mangarh",
   "Financial Year (e.g. 19-20)",
 ] as const;
+
+// Explicit per-section variable additions keyed by normalized section title.
+// Used for variables a section logically needs but which do NOT appear as a
+// literal <placeholder> in the template body (e.g. the gardens caretaker).
+const SECTION_VARIABLE_MAP: Record<string, string[]> = {
+  "maintenance-of-gardens": ["caretaker-of-gardens"],
+  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-other-gardens": ["caretaker-of-gardens"],
+};
 
 // Tokens whose value is a single date the user picks; rendered as a formatted
 // date string (e.g. "5 September 2024") rather than expanded into day/month/year.
@@ -152,6 +161,64 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
     ...additionalTyped,
     ...dateVars,
   ]);
+}
+
+// The curated, template-independent set of variables a user can fill on the
+// setup page. Used to (a) drive the section-template variable picker and (b)
+// decide which body <placeholders> count as fillable setup variables.
+export function setupVariableCatalog(): Placeholder[] {
+  const required: Placeholder[] = REQUIRED_TEMPLATE_VARIABLES.map((v) => ({
+    token: v.token,
+    raw: v.raw,
+    required: true,
+  }));
+  const additional = ADDITIONAL_TEMPLATE_VARIABLES.map((raw) => canonicalPlaceholder(raw))
+    .filter((p): p is Placeholder => p != null)
+    .map((p) => (SIMPLE_DATE_TOKENS.has(p.token) ? { ...p, kind: "date" as const } : p));
+  const dateVars: Placeholder[] = DATE_TEMPLATE_VARIABLES.map((d) => ({
+    token: d.token,
+    raw: d.raw,
+    kind: "date",
+  }));
+  return mergePlaceholders([...required, ...additional, ...dateVars]);
+}
+
+const KNOWN_SETUP_TOKENS = new Set(setupVariableCatalog().map((p) => p.token));
+
+// Maps the derived day/month/year tokens of a "date" variable back to the
+// single date token the user actually fills in on setup.
+const DATE_ALIAS_TO_VAR: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const d of DATE_TEMPLATE_VARIABLES) {
+    map[d.dayToken] = d.token;
+    map[d.monthToken] = d.token;
+    map[d.yearToken] = d.token;
+  }
+  return map;
+})();
+
+// Determines which setup variables a section depends on: every fillable
+// <placeholder> in its body/title, plus any explicit per-section additions.
+export function inferRequiredVariables(bodyText = "", title = ""): string[] {
+  const tokens = new Set<string>();
+  for (const m of `${bodyText} ${title}`.matchAll(/<([^<>\n]{2,200}?)>/g)) {
+    const raw = m[1] ?? "";
+    const tok = canonicalToken(raw);
+    const mapped = DATE_ALIAS_TO_VAR[tok] ?? tok;
+    if (KNOWN_SETUP_TOKENS.has(mapped)) tokens.add(mapped);
+  }
+  const key = normalizeSectionTitleForMap(title);
+  for (const extra of SECTION_VARIABLE_MAP[key] ?? []) tokens.add(extra);
+  return [...tokens];
+}
+
+function normalizeSectionTitleForMap(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/&[a-z]+;/g, "")
+    .replace(/\bthe\b/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function buildTemplateVariables(args: {

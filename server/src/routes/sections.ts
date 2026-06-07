@@ -5,7 +5,7 @@ import { generate, type ProviderId } from "../services/ai/index.ts";
 import { buildPrompt, type PromptContext } from "../services/prompts/index.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import type { ParsedSection, ParsedTemplate } from "../services/template-parser.ts";
-import { buildTemplateVariables, fillTemplateText, slugifyVariable } from "../services/template-variables.ts";
+import { buildTemplateVariables, fillTemplateText, inferRequiredVariables, slugifyVariable } from "../services/template-variables.ts";
 import { exampleFilePath, exampleSourcesFor } from "../services/example-sources.ts";
 import { existsSync } from "node:fs";
 
@@ -46,6 +46,7 @@ type SectionRow = {
   status: string;
   mode: string;
   required_sources_json: string;
+  required_variables_json: string | null;
   last_ai_provider: string | null;
   last_ai_model: string | null;
   updated_at: string;
@@ -102,10 +103,20 @@ function rowToSection(row: SectionRow, variables?: Record<string, string>) {
     status: row.status,
     mode: row.mode === "ai" ? "ai" : "template",
     required_sources: parseSourcesJson(row.required_sources_json),
+    required_variables: mergeVariables(
+      inferRequiredVariables(row.template_body_text ?? "", row.title),
+      parseSourcesJson(row.required_variables_json ?? "[]"),
+    ),
     last_ai_provider: row.last_ai_provider,
     last_ai_model: row.last_ai_model,
     updated_at: row.updated_at,
   };
+}
+
+function mergeVariables(...lists: string[][]): string[] {
+  const out = new Set<string>();
+  for (const list of lists) for (const v of list) out.add(v);
+  return [...out];
 }
 
 function slugify(s: string): string {
@@ -156,6 +167,7 @@ r.post("/meetings/:id/sections", async (c) => {
     content_md: string;
     template_body_text: string;
     required_sources: string[];
+    required_variables: string[];
   }>;
   const title = body.title?.trim();
   if (!title) return c.json({ error: "title required" }, 400);
@@ -167,11 +179,14 @@ r.post("/meetings/:id/sections", async (c) => {
   const templateBody = body.template_body_text ?? body.content_md ?? "";
   const contentMd = body.content_md ?? templateBody;
   const required = body.required_sources ?? inferRequiredSources(title, contentMd);
+  const requiredVars = Array.isArray(body.required_variables)
+    ? body.required_variables.filter((x): x is string => typeof x === "string")
+    : inferRequiredVariables(templateBody, title);
   const res = db.run(
     `INSERT INTO section_drafts
-       (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    [id, key, max + 1, title, contentMd, templateBody, body.mode === "ai" ? "ai" : "template", JSON.stringify(required)],
+       (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json, required_variables_json)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    [id, key, max + 1, title, contentMd, templateBody, body.mode === "ai" ? "ai" : "template", JSON.stringify(required), JSON.stringify(requiredVars)],
   );
   const row = db.query<SectionRow, [number]>("SELECT * FROM section_drafts WHERE id = ?")
     .get(Number(res.lastInsertRowid));
@@ -211,6 +226,7 @@ r.patch("/meetings/:id/sections/:key", async (c) => {
     status: "pending" | "draft" | "approved";
     mode: "template" | "ai";
     required_sources: string[];
+    required_variables: string[];
   }>;
   db.run(
     `UPDATE section_drafts
@@ -219,6 +235,7 @@ r.patch("/meetings/:id/sections/:key", async (c) => {
          status = COALESCE(?, status),
          mode = COALESCE(?, mode),
          required_sources_json = COALESCE(?, required_sources_json),
+         required_variables_json = COALESCE(?, required_variables_json),
          updated_at = datetime('now')
      WHERE meeting_id = ? AND section_key = ?`,
     [
@@ -227,6 +244,7 @@ r.patch("/meetings/:id/sections/:key", async (c) => {
       body.status ?? null,
       body.mode ?? null,
       body.required_sources ? JSON.stringify(body.required_sources) : null,
+      body.required_variables ? JSON.stringify(body.required_variables) : null,
       id,
       key,
     ],

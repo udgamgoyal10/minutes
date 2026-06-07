@@ -4,6 +4,7 @@ import {
   useCreateSectionTemplate,
   useDeleteSectionTemplate,
   useSectionTemplates,
+  useTemplateVariables,
   useUpdateSectionTemplate,
   type SectionTemplate,
 } from "../lib/api.ts";
@@ -195,13 +196,27 @@ function SectionTemplateEditor({
 }) {
   const create = useCreateSectionTemplate();
   const updateTemplate = useUpdateSectionTemplate();
+  const variablesQ = useTemplateVariables();
   const [title, setTitle] = useState(existing?.title ?? "");
   const [body, setBody] = useState(existing?.body_text ?? "");
   const [sources, setSources] = useState((existing?.required_sources ?? []).join(", "));
+  const [selectedVars, setSelectedVars] = useState<Set<string>>(
+    new Set(existing?.required_variables ?? []),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = existing != null;
   const busy = create.isPending || updateTemplate.isPending;
+  const catalog = variablesQ.data?.variables ?? [];
+
+  function toggleVar(token: string) {
+    setSelectedVars((prev) => {
+      const next = new Set(prev);
+      if (next.has(token)) next.delete(token);
+      else next.add(token);
+      return next;
+    });
+  }
 
   async function save() {
     const trimmed = title.trim();
@@ -213,6 +228,7 @@ function SectionTemplateEditor({
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+    const required_variables = [...selectedVars];
     try {
       if (isEdit && existing?.custom_id != null) {
         await updateTemplate.mutateAsync({
@@ -220,9 +236,10 @@ function SectionTemplateEditor({
           title: trimmed,
           body_text: body,
           required_sources,
+          required_variables,
         });
       } else {
-        await create.mutateAsync({ title: trimmed, body_text: body, required_sources });
+        await create.mutateAsync({ title: trimmed, body_text: body, required_sources, required_variables });
       }
       onCancel();
     } catch (err) {
@@ -289,6 +306,27 @@ function SectionTemplateEditor({
               className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
             />
           </label>
+          <div>
+            <span className="text-sm font-medium text-slate-700">Required template variables</span>
+            <p className="text-xs text-slate-500 mb-2">
+              Choose which variables this section needs. Selected variables appear on the meeting
+              Setup page whenever this section is included.
+            </p>
+            {variablesQ.isLoading && <p className="text-xs text-slate-500">Loading variables…</p>}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {catalog.map((v) => (
+                <label key={v.token} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={selectedVars.has(v.token)}
+                    onChange={() => toggleVar(v.token)}
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  <span>{v.raw}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           {error && <p className="text-sm text-rose-600">{error}</p>}
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">

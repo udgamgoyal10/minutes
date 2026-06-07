@@ -76,6 +76,7 @@ export type SectionDraft = {
   status: "pending" | "draft" | "approved";
   mode: "template" | "ai";
   required_sources: string[];
+  required_variables: string[];
   last_ai_provider: string | null;
   last_ai_model: string | null;
   updated_at: string;
@@ -286,6 +287,7 @@ export function useCreateSection(meetingId: number) {
       content_md?: string;
       template_body_text?: string;
       required_sources?: string[];
+      required_variables?: string[];
     }) =>
       apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections`, {
         method: "POST",
@@ -301,6 +303,7 @@ export type SectionTemplate = {
   body_text: string;
   placeholders: { token: string; raw: string }[];
   required_sources: string[];
+  required_variables: string[];
   template_id: number;
   template_slug: string;
   template_title: string;
@@ -317,7 +320,12 @@ export function useSectionTemplates() {
 export function useCreateSectionTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { title: string; body_text: string; required_sources?: string[] }) =>
+    mutationFn: (vars: {
+      title: string;
+      body_text: string;
+      required_sources?: string[];
+      required_variables?: string[];
+    }) =>
       apiFetch<{ template: SectionTemplate }>(`/api/section-templates`, {
         method: "POST",
         body: JSON.stringify(vars),
@@ -329,16 +337,31 @@ export function useCreateSectionTemplate() {
 export function useUpdateSectionTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { customId: number; title?: string; body_text?: string; required_sources?: string[] }) =>
+    mutationFn: (vars: {
+      customId: number;
+      title?: string;
+      body_text?: string;
+      required_sources?: string[];
+      required_variables?: string[];
+    }) =>
       apiFetch<{ template: SectionTemplate }>(`/api/section-templates/custom/${vars.customId}`, {
         method: "PATCH",
         body: JSON.stringify({
           title: vars.title,
           body_text: vars.body_text,
           required_sources: vars.required_sources,
+          required_variables: vars.required_variables,
         }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
+export function useTemplateVariables() {
+  return useQuery({
+    queryKey: ["template-variables"],
+    queryFn: () => apiFetch<{ variables: Placeholder[] }>(`/api/template-variables`),
+    staleTime: 5 * 60_000,
   });
 }
 

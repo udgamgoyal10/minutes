@@ -117,7 +117,6 @@ export function buildPrompt(ctx: PromptContext): { system: string; prompt: strin
   const templateBody = ctx.templateBodyText || ctx.section.bodyText;
   const hasPlaceholders = /<[^<>\n]{2,200}>/.test(templateBody);
   const header =
-    `Organization: ${ctx.organizationName}\n` +
     `Meeting: ${ctx.meetingTitle}\n` +
     `Meeting date: ${ctx.meetingDate || "(unset)"}; previous meeting: ${ctx.previousMeetingDate || "(unset)"}\n\n` +
     `Section title: ${ctx.section.title}\n\n`;
