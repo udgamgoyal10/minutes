@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { clearPersistedAuth, getAccessTokenFromStorage } from "./auth.tsx";
+import {
+  clearPersistedAuth,
+  getAccessTokenFromStorage,
+  getRefreshTokenFromStorage,
+  isAuthInactive,
+  persistTokens,
+} from "./auth.tsx";
 
 // ---- Types (mirror server JSON shapes) ----
 
@@ -19,7 +25,7 @@ export type ParsedSection = {
   placeholders: Array<{ token: string; raw: string; kind?: "text" | "date" }>;
 };
 
-export type Placeholder = { token: string; raw: string; kind?: "text" | "date"; required?: boolean };
+export type Placeholder = { token: string; raw: string; kind?: "text" | "date"; required?: boolean; editable?: boolean; custom?: boolean; section_keys?: string[] };
 
 export type ParsedTemplate = {
   title: string;
@@ -41,6 +47,8 @@ export type Organization = { id: number; slug: string; name: string };
 export type Meeting = {
   id: number;
   template_id: number;
+  user_id: number;
+  owner_email?: string | null;
   label: string;
   meeting_date: string | null;
   previous_meeting_date: string | null;
@@ -60,7 +68,17 @@ export type Source = {
   original_name: string | null;
   mime: string | null;
   extracted_text: string | null;
+  section_key?: string | null;
   created_at: string;
+};
+
+export type AppUser = {
+  id: number;
+  email: string;
+  role: "user" | "admin" | "super_admin";
+  two_factor_enabled: boolean;
+  created_at: string;
+  updated_at: string | null;
 };
 
 export type SectionDraft = {
@@ -82,19 +100,25 @@ export type SectionDraft = {
   updated_at: string;
 };
 
+export type SectionPrompt = {
+  system: string;
+  prompt: string;
+  generated_prompt?: string;
+  saved_prompt?: string | null;
+};
+
+export type VariableValuesResponse = {
+  values: Record<string, string[]>;
+  genders?: Record<string, Record<string, string>>;
+};
+
 // ---- Fetch wrapper ----
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getAccessTokenFromStorage();
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (!(init.body instanceof FormData) && init.body) {
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  }
-  const res = await fetch(path, { ...init, headers });
+  const res = await fetchWithAuth(path, init);
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
-    if (res.status === 401 && (err.error === "invalid token" || err.error === "wrong token type" || err.error === "missing token")) {
+    if (res.status === 401) {
       clearPersistedAuth();
       if (window.location.pathname !== "/login") window.location.assign("/login");
     }
@@ -103,11 +127,8 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function apiBlob(path: string): Promise<Blob> {
-  const token = getAccessTokenFromStorage();
-  const headers = new Headers();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(path, { headers });
+async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const res = await fetchWithAuth(path, init);
   if (!res.ok) {
     if (res.status === 401) {
       clearPersistedAuth();
@@ -116,6 +137,40 @@ async function apiBlob(path: string): Promise<Blob> {
     throw new Error(`${res.status} ${res.statusText}`);
   }
   return await res.blob();
+}
+
+async function fetchWithAuth(path: string, init: RequestInit = {}, didRefresh = false): Promise<Response> {
+  if (isAuthInactive()) {
+    clearPersistedAuth();
+    if (window.location.pathname !== "/login") window.location.assign("/login");
+    return new Response(JSON.stringify({ error: "inactive session" }), { status: 401 });
+  }
+  const token = getAccessTokenFromStorage();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!(init.body instanceof FormData) && init.body) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  }
+  const res = await fetch(path, { ...init, headers });
+  if (res.status !== 401 || didRefresh) return res;
+  const refreshed = await refreshAccessToken();
+  if (!refreshed) return res;
+  return fetchWithAuth(path, init, true);
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  const refreshToken = getRefreshTokenFromStorage();
+  if (!refreshToken || isAuthInactive()) return false;
+  const res = await fetch("/api/auth/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!res.ok) return false;
+  const data = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string };
+  if (!data.access_token) return false;
+  persistTokens(data.access_token, data.refresh_token);
+  return true;
 }
 
 // ---- Hooks ----
@@ -156,6 +211,25 @@ export function useMeeting(id: number | null) {
     queryKey: ["meetings", id],
     queryFn: () => apiFetch<{ meeting: Meeting }>(`/api/meetings/${id}`),
     enabled: id != null,
+  });
+}
+
+export function useUsers() {
+  return useQuery({
+    queryKey: ["users"],
+    queryFn: () => apiFetch<{ users: AppUser[] }>("/api/users"),
+  });
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { email: string; role?: "user" | "admin" }) =>
+      apiFetch<{ user: AppUser }>("/api/users", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 
@@ -219,9 +293,10 @@ export function useSources(meetingId: number | null, sectionKey?: string) {
 export function useUploadSources(meetingId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (vars: { files?: FileList | File[]; text?: string; label?: string }) => {
+    mutationFn: async (vars: { files?: FileList | File[]; text?: string; label?: string; sectionKey?: string }) => {
       const fd = new FormData();
       if (vars.label) fd.set("label", vars.label);
+      if (vars.sectionKey) fd.set("section_key", vars.sectionKey);
       if (vars.text) fd.set("text", vars.text);
       const files = vars.files ? Array.from(vars.files) : [];
       for (const f of files) fd.append("files", f);
@@ -230,7 +305,7 @@ export function useUploadSources(meetingId: number) {
         body: fd,
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sources"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sources"], exact: false }),
   });
 }
 
@@ -241,7 +316,7 @@ export function useDeleteSource(meetingId: number) {
       apiFetch<{ ok: true }>(`/api/meetings/${meetingId}/sources/${sourceId}`, {
         method: "DELETE",
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sources"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sources"], exact: false }),
   });
 }
 
@@ -288,6 +363,7 @@ export function useCreateSection(meetingId: number) {
       template_body_text?: string;
       required_sources?: string[];
       required_variables?: string[];
+      new_variables?: Array<{ raw: string; kind?: "text" | "date" }>;
     }) =>
       apiFetch<{ section: SectionDraft }>(`/api/meetings/${meetingId}/sections`, {
         method: "POST",
@@ -308,6 +384,9 @@ export type SectionTemplate = {
   template_slug: string;
   template_title: string;
   custom_id?: number;
+  owner_user_id?: number;
+  owner_email?: string | null;
+  can_edit?: boolean;
 };
 
 export function useSectionTemplates() {
@@ -325,6 +404,7 @@ export function useCreateSectionTemplate() {
       body_text: string;
       required_sources?: string[];
       required_variables?: string[];
+      new_variables?: Array<{ raw: string; kind?: "text" | "date" }>;
     }) =>
       apiFetch<{ template: SectionTemplate }>(`/api/section-templates`, {
         method: "POST",
@@ -343,6 +423,7 @@ export function useUpdateSectionTemplate() {
       body_text?: string;
       required_sources?: string[];
       required_variables?: string[];
+      new_variables?: Array<{ raw: string; kind?: "text" | "date" }>;
     }) =>
       apiFetch<{ template: SectionTemplate }>(`/api/section-templates/custom/${vars.customId}`, {
         method: "PATCH",
@@ -351,9 +432,67 @@ export function useUpdateSectionTemplate() {
           body_text: vars.body_text,
           required_sources: vars.required_sources,
           required_variables: vars.required_variables,
+          new_variables: vars.new_variables,
         }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["section-templates"] }),
+  });
+}
+
+export function useUpdateBaseSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      sectionKey: string;
+      title?: string;
+      body_text?: string;
+      required_sources?: string[];
+      required_variables?: string[];
+      new_variables?: Array<{ raw: string; kind?: "text" | "date" }>;
+    }) =>
+      apiFetch<{ template: SectionTemplate | null; variables: Placeholder[] }>(`/api/section-templates/${vars.sectionKey}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: vars.title,
+          body_text: vars.body_text,
+          required_sources: vars.required_sources,
+          required_variables: vars.required_variables,
+          new_variables: vars.new_variables,
+        }),
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+      qc.setQueryData(["template-variables"], { variables: data.variables });
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+    },
+  });
+}
+
+
+
+export function useUpdateSectionTemplateVariables() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      sectionKey: string;
+      required_variables: string[];
+      new_variables?: Array<{ raw: string; kind?: "text" | "date" }>;
+    }) =>
+      apiFetch<{ section: SectionTemplate | null; variables: Placeholder[] }>(
+        `/api/section-templates/${vars.sectionKey}/variables`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            required_variables: vars.required_variables,
+            new_variables: vars.new_variables,
+          }),
+        },
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+      qc.setQueryData(["template-variables"], { variables: data.variables });
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+    },
   });
 }
 
@@ -362,6 +501,54 @@ export function useTemplateVariables() {
     queryKey: ["template-variables"],
     queryFn: () => apiFetch<{ variables: Placeholder[] }>(`/api/template-variables`),
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useCreateTemplateVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { raw: string; kind?: "text" | "date"; section_keys: string[] }) =>
+      apiFetch<{ variables: Placeholder[] }>(`/api/template-variables`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["template-variables"], data);
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+      qc.invalidateQueries({ queryKey: ["template-variables"] });
+    },
+  });
+}
+
+export function useUpdateTemplateVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { token: string; raw: string; kind?: "text" | "date"; section_keys: string[] }) =>
+      apiFetch<{ variables: Placeholder[] }>(`/api/template-variables/${vars.token}`, {
+        method: "PATCH",
+        body: JSON.stringify({ raw: vars.raw, kind: vars.kind, section_keys: vars.section_keys }),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["template-variables"], data);
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+    },
+  });
+}
+
+
+
+export function useDeleteTemplateVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) =>
+      apiFetch<{ variables: Placeholder[] }>(`/api/template-variables/${token}`, { method: "DELETE" }),
+    onSuccess: (data) => {
+      qc.setQueryData(["template-variables"], data);
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+      qc.invalidateQueries({ queryKey: ["variable-values"] });
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+    },
   });
 }
 
@@ -377,7 +564,7 @@ export function useDeleteSectionTemplate() {
 export function useVariableValues() {
   return useQuery({
     queryKey: ["variable-values"],
-    queryFn: () => apiFetch<{ values: Record<string, string[]> }>(`/api/variable-values`),
+    queryFn: () => apiFetch<VariableValuesResponse>(`/api/variable-values`),
     staleTime: 60_000,
   });
 }
@@ -385,10 +572,34 @@ export function useVariableValues() {
 export function useSaveVariableValues() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (entries: Array<{ token: string; value: string }>) =>
-      apiFetch<{ values: Record<string, string[]> }>(`/api/variable-values`, {
+    mutationFn: (entries: Array<{ token: string; value: string; gender?: string }>) =>
+      apiFetch<VariableValuesResponse>(`/api/variable-values`, {
         method: "POST",
         body: JSON.stringify({ entries }),
+      }),
+    onSuccess: (data) => qc.setQueryData(["variable-values"], data),
+  });
+}
+
+export function useUpdateVariableValue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { token: string; old_value: string; value: string; gender?: string }) =>
+      apiFetch<VariableValuesResponse>(`/api/variable-values`, {
+        method: "PATCH",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: (data) => qc.setQueryData(["variable-values"], data),
+  });
+}
+
+export function useDeleteVariableValue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { token: string; value: string }) =>
+      apiFetch<VariableValuesResponse>(`/api/variable-values`, {
+        method: "DELETE",
+        body: JSON.stringify(vars),
       }),
     onSuccess: (data) => qc.setQueryData(["variable-values"], data),
   });
@@ -472,7 +683,15 @@ export function useGenerateSection(meetingId: number) {
           source_ids: vars.source_ids,
         }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] }),
+    onSuccess: (data, vars) => {
+      qc.setQueryData<{ sections: SectionDraft[] }>(["meetings", meetingId, "sections"], (old) => {
+        if (!old?.sections || !data.section) return old;
+        return {
+          sections: old.sections.map((s) => (s.section_key === vars.key ? data.section : s)),
+        };
+      });
+      qc.invalidateQueries({ queryKey: ["meetings", meetingId, "sections"] });
+    },
   });
 }
 
@@ -480,7 +699,7 @@ export function useSectionPrompt(meetingId: number, sectionKey: string | null) {
   return useQuery({
     queryKey: ["meetings", meetingId, "sections", sectionKey, "prompt"],
     queryFn: () =>
-      apiFetch<{ system: string; prompt: string }>(
+      apiFetch<SectionPrompt>(
         `/api/meetings/${meetingId}/sections/${sectionKey}/prompt`,
       ),
     enabled: meetingId != null && !!sectionKey,
@@ -488,12 +707,51 @@ export function useSectionPrompt(meetingId: number, sectionKey: string | null) {
   });
 }
 
+export function useSaveSectionPrompt(meetingId: number, sectionKey: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prompt: string) =>
+      apiFetch<SectionPrompt>(`/api/meetings/${meetingId}/sections/${sectionKey}/prompt`, {
+        method: "PATCH",
+        body: JSON.stringify({ prompt }),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["meetings", meetingId, "sections", sectionKey, "prompt"], data);
+    },
+  });
+}
+
+export function useResetSectionPrompt(meetingId: number, sectionKey: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<SectionPrompt>(`/api/meetings/${meetingId}/sections/${sectionKey}/prompt`, {
+        method: "DELETE",
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["meetings", meetingId, "sections", sectionKey, "prompt"], data);
+    },
+  });
+}
+
 export async function downloadExport(meetingId: number, fmt: "docx" | "pdf"): Promise<void> {
   const blob = await apiBlob(`/api/meetings/${meetingId}/export/${fmt}`);
+  saveBlob(blob, `minutes-${meetingId}.${fmt}`);
+}
+
+export async function downloadCombinedMeetingsExport(meetingIds: number[]): Promise<void> {
+  const blob = await apiBlob("/api/meetings/export/docx", {
+    method: "POST",
+    body: JSON.stringify({ meeting_ids: meetingIds }),
+  });
+  saveBlob(blob, "combined-minutes.docx");
+}
+
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `minutes-${meetingId}.${fmt}`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();

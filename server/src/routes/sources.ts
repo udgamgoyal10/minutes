@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { db } from "../config/db.ts";
 import { env } from "../config/env.ts";
-import { requireAuth } from "../middleware/auth.ts";
+import { isAdminRole, requireAuth } from "../middleware/auth.ts";
 import { extract, kindFromMime, type SourceKind } from "../services/extractors/index.ts";
 
 const r = new Hono();
@@ -18,20 +18,27 @@ type SourceRow = {
   stored_path: string | null;
   mime: string | null;
   extracted_text: string | null;
+  section_key: string | null;
   created_at: string;
 };
 
-function ensureOwnedMeeting(meetingId: number, userId: number): boolean {
+function canAccessMeeting(meetingId: number, user: { id: number; role: string }): boolean {
+  if (isAdminRole(user.role)) {
+    const row = db.query<{ id: number }, [number]>(
+      "SELECT id FROM meetings WHERE id = ?",
+    ).get(meetingId);
+    return Boolean(row);
+  }
   const row = db.query<{ id: number }, [number, number]>(
     "SELECT id FROM meetings WHERE id = ? AND user_id = ?",
-  ).get(meetingId, userId);
+  ).get(meetingId, user.id);
   return Boolean(row);
 }
 
 r.get("/meetings/:id/sources", (c) => {
   const user = c.get("user");
   const meetingId = Number(c.req.param("id"));
-  if (!ensureOwnedMeeting(meetingId, user.id)) return c.json({ error: "not found" }, 404);
+  if (!canAccessMeeting(meetingId, user)) return c.json({ error: "not found" }, 404);
   const sectionKey = c.req.query("section_key");
   if (sectionKey) {
     const draft = db.query<{ required_sources_json: string }, [number, string]>(
@@ -47,11 +54,17 @@ r.get("/meetings/:id/sources", (c) => {
           }
         })()
       : [];
-    if (!labels.length) return c.json({ sources: [] });
+    const optionalLabel = `__section:${sectionKey}`;
+    if (!labels.length) {
+      const rows = db.query<SourceRow, [number, string, string]>(
+        "SELECT * FROM sources WHERE meeting_id = ? AND (section_key = ? OR (section_key IS NULL AND label = ?)) ORDER BY id ASC",
+      ).all(meetingId, sectionKey, optionalLabel);
+      return c.json({ sources: rows });
+    }
     const placeholders = labels.map(() => "?").join(",");
     const rows = db.query<SourceRow, (number | string)[]>(
-      `SELECT * FROM sources WHERE meeting_id = ? AND label IN (${placeholders}) ORDER BY id ASC`,
-    ).all(meetingId, ...labels);
+      `SELECT * FROM sources WHERE meeting_id = ? AND (section_key = ? OR (section_key IS NULL AND (label IN (${placeholders}) OR label = ?))) ORDER BY id ASC`,
+    ).all(meetingId, sectionKey, ...labels, optionalLabel);
     return c.json({ sources: rows });
   }
   const rows = db.query<SourceRow, [number]>(
@@ -63,18 +76,19 @@ r.get("/meetings/:id/sources", (c) => {
 r.post("/meetings/:id/sources", async (c) => {
   const user = c.get("user");
   const meetingId = Number(c.req.param("id"));
-  if (!ensureOwnedMeeting(meetingId, user.id)) return c.json({ error: "not found" }, 404);
+  if (!canAccessMeeting(meetingId, user)) return c.json({ error: "not found" }, 404);
 
   const form = await c.req.parseBody({ all: true }).catch(() => null);
   if (!form) return c.json({ error: "invalid form" }, 400);
 
   const label = typeof form.label === "string" ? form.label : "";
+  const sectionKey = typeof form.section_key === "string" ? form.section_key : null;
   const created: SourceRow[] = [];
 
   // 1) text paste
   const pastedText = typeof form.text === "string" ? form.text : "";
   if (pastedText.trim()) {
-    const row = await insertText(meetingId, pastedText, label);
+    const row = await insertText(meetingId, pastedText, label, sectionKey);
     created.push(row);
   }
 
@@ -87,7 +101,7 @@ r.post("/meetings/:id/sources", async (c) => {
       : [];
 
   for (const f of files) {
-    const row = await insertFile(meetingId, f, label);
+    const row = await insertFile(meetingId, f, label, sectionKey);
     created.push(row);
   }
 
@@ -98,21 +112,21 @@ r.delete("/meetings/:id/sources/:sourceId", (c) => {
   const user = c.get("user");
   const meetingId = Number(c.req.param("id"));
   const sourceId = Number(c.req.param("sourceId"));
-  if (!ensureOwnedMeeting(meetingId, user.id)) return c.json({ error: "not found" }, 404);
+  if (!canAccessMeeting(meetingId, user)) return c.json({ error: "not found" }, 404);
   db.run("DELETE FROM sources WHERE id = ? AND meeting_id = ?", [sourceId, meetingId]);
   return c.json({ ok: true });
 });
 
-async function insertText(meetingId: number, text: string, label: string): Promise<SourceRow> {
+async function insertText(meetingId: number, text: string, label: string, sectionKey: string | null): Promise<SourceRow> {
   const res = db.run(
-    `INSERT INTO sources (meeting_id, kind, label, extracted_text) VALUES (?, 'text', ?, ?)`,
-    [meetingId, label, text],
+    `INSERT INTO sources (meeting_id, kind, label, section_key, extracted_text) VALUES (?, 'text', ?, ?, ?)`,
+    [meetingId, label, sectionKey, text],
   );
   return db.query<SourceRow, [number]>("SELECT * FROM sources WHERE id = ?")
     .get(Number(res.lastInsertRowid))!;
 }
 
-async function insertFile(meetingId: number, file: File, label: string): Promise<SourceRow> {
+async function insertFile(meetingId: number, file: File, label: string, sectionKey: string | null): Promise<SourceRow> {
   const safeName = file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
   const uploadRoot = resolve(process.cwd(), env.uploadDir, String(meetingId));
   await mkdir(uploadRoot, { recursive: true });
@@ -129,9 +143,9 @@ async function insertFile(meetingId: number, file: File, label: string): Promise
   }
 
   const res = db.run(
-    `INSERT INTO sources (meeting_id, kind, label, original_name, stored_path, mime, extracted_text)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [meetingId, kind, label, file.name, storedPath, file.type, extracted],
+    `INSERT INTO sources (meeting_id, kind, label, section_key, original_name, stored_path, mime, extracted_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [meetingId, kind, label, sectionKey, file.name, storedPath, file.type, extracted],
   );
   return db.query<SourceRow, [number]>("SELECT * FROM sources WHERE id = ?")
     .get(Number(res.lastInsertRowid))!;

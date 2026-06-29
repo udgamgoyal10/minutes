@@ -5,9 +5,14 @@ import {
   useDeleteSectionTemplate,
   useSectionTemplates,
   useTemplateVariables,
+  useUpdateBaseSectionTemplate,
   useUpdateSectionTemplate,
   type SectionTemplate,
 } from "../lib/api.ts";
+
+function isGenderMetadataToken(token: string): boolean {
+  return token.endsWith("-gender") || token.endsWith("-subject-pronoun") || token.endsWith("-object-pronoun") || token.endsWith("-possessive-pronoun");
+}
 
 export function SectionPicker({
   open,
@@ -136,27 +141,27 @@ export function SectionPicker({
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-1">
+                    {s.can_edit !== false && (
+                      <button
+                        onClick={() => setEditing(s)}
+                        className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-brand-600 hover:bg-brand-50"
+                        title="Edit template"
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                    )}
                     {s.custom_id != null && (
-                      <>
-                        <button
-                          onClick={() => setEditing(s)}
-                          className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-brand-600 hover:bg-brand-50"
-                          title="Edit saved template"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete saved template "${s.title}"?`)) {
-                              delTemplate.mutate(s.custom_id!);
-                            }
-                          }}
-                          className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                          title="Delete saved template"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete saved template "${s.title}"?`)) {
+                            delTemplate.mutate(s.custom_id!);
+                          }
+                        }}
+                        className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete saved template"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
                     )}
                     <button
                       onClick={() => onPick(s)}
@@ -196,6 +201,7 @@ function SectionTemplateEditor({
 }) {
   const create = useCreateSectionTemplate();
   const updateTemplate = useUpdateSectionTemplate();
+  const updateBaseTemplate = useUpdateBaseSectionTemplate();
   const variablesQ = useTemplateVariables();
   const [title, setTitle] = useState(existing?.title ?? "");
   const [body, setBody] = useState(existing?.body_text ?? "");
@@ -203,11 +209,14 @@ function SectionTemplateEditor({
   const [selectedVars, setSelectedVars] = useState<Set<string>>(
     new Set(existing?.required_variables ?? []),
   );
+  const [newVarName, setNewVarName] = useState("");
+  const [newVars, setNewVars] = useState<Array<{ raw: string; kind: "text" | "date" }>>([]);
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = existing != null;
-  const busy = create.isPending || updateTemplate.isPending;
-  const catalog = variablesQ.data?.variables ?? [];
+  const busy = create.isPending || updateTemplate.isPending || updateBaseTemplate.isPending;
+  const catalog = [...(variablesQ.data?.variables ?? []), ...newVars.map((v) => ({ token: slugToken(v.raw), raw: v.raw, kind: v.kind }))]
+    .filter((v) => !isGenderMetadataToken(v.token));
 
   function toggleVar(token: string) {
     setSelectedVars((prev) => {
@@ -216,6 +225,16 @@ function SectionTemplateEditor({
       else next.add(token);
       return next;
     });
+  }
+
+  function addLocalVariable() {
+    const raw = newVarName.trim();
+    if (!raw) return;
+    const token = slugToken(raw);
+    if (!token) return;
+    setNewVars((prev) => (prev.some((v) => slugToken(v.raw) === token) ? prev : [...prev, { raw, kind: "text" }]));
+    setSelectedVars((prev) => new Set([...prev, token]));
+    setNewVarName("");
   }
 
   async function save() {
@@ -237,9 +256,19 @@ function SectionTemplateEditor({
           body_text: body,
           required_sources,
           required_variables,
+          new_variables: newVars,
+        });
+      } else if (isEdit && existing) {
+        await updateBaseTemplate.mutateAsync({
+          sectionKey: existing.key,
+          title: trimmed,
+          body_text: body,
+          required_sources,
+          required_variables,
+          new_variables: newVars,
         });
       } else {
-        await create.mutateAsync({ title: trimmed, body_text: body, required_sources, required_variables });
+        await create.mutateAsync({ title: trimmed, body_text: body, required_sources, required_variables, new_variables: newVars });
       }
       onCancel();
     } catch (err) {
@@ -279,7 +308,7 @@ function SectionTemplateEditor({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Approval of Annual Accounts"
-              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
           <label className="block">
@@ -293,7 +322,7 @@ function SectionTemplateEditor({
               onChange={(e) => setBody(e.target.value)}
               rows={12}
               placeholder="Section wording…"
-              className="w-full border border-slate-300 rounded-md p-3 font-mono text-sm"
+              className="w-full border border-slate-300 rounded-md p-3 font-mono text-sm disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
           <label className="block">
@@ -303,7 +332,7 @@ function SectionTemplateEditor({
               value={sources}
               onChange={(e) => setSources(e.target.value)}
               placeholder="e.g. Investment Chart, Progress Report"
-              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
           <div>
@@ -312,6 +341,21 @@ function SectionTemplateEditor({
               Choose which variables this section needs. Selected variables appear on the meeting
               Setup page whenever this section is included.
             </p>
+            <div className="mb-3 flex gap-2">
+              <input
+                value={newVarName}
+                onChange={(e) => setNewVarName(e.target.value)}
+                placeholder="New variable for this section"
+                className="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={addLocalVariable}
+                className="text-sm border border-slate-300 rounded-md px-3 py-1.5 hover:bg-slate-50"
+              >
+                Add variable
+              </button>
+            </div>
             {variablesQ.isLoading && <p className="text-xs text-slate-500">Loading variables…</p>}
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {catalog.map((v) => (
@@ -348,4 +392,13 @@ function SectionTemplateEditor({
       </div>
     </div>
   );
+}
+
+function slugToken(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/&[a-z]+;/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }

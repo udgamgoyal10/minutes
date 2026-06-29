@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Check, FileText, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { Check, Download, FileText, Loader2, Pencil, Trash2, X } from "lucide-react";
 import {
+  downloadCombinedMeetingsExport,
   useDeleteMeeting,
   useMeetings,
   useUpdateMeeting,
@@ -11,9 +12,12 @@ import {
 export function MeetingsListPage() {
   const { data, isLoading, error } = useMeetings();
   const del = useDeleteMeeting();
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [exporting, setExporting] = useState(false);
+  const selectedIds = [...selected];
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-6">Your meetings</h1>
+      <h1 className="text-2xl font-semibold mb-6">Meetings</h1>
       {isLoading && (
         <div className="flex items-center gap-2 text-slate-500">
           <Loader2 className="size-4 animate-spin" /> Loading…
@@ -33,19 +37,57 @@ export function MeetingsListPage() {
         </div>
       )}
       {data && data.meetings.length > 0 && (
-        <ul className="space-y-2">
-          {data.meetings.map((m) => (
-            <MeetingRow
-              key={m.id}
-              meeting={m}
-              onDelete={async () => {
-                if (!confirm(`Delete meeting "${m.label}"? This cannot be undone.`)) return;
-                await del.mutateAsync(m.id);
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={async () => {
+                if (!selectedIds.length) return;
+                setExporting(true);
+                try {
+                  await downloadCombinedMeetingsExport(selectedIds);
+                } finally {
+                  setExporting(false);
+                }
               }}
-              deleting={del.isPending}
-            />
-          ))}
-        </ul>
+              disabled={exporting || selectedIds.length === 0}
+              className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              Export selected to one .docx
+            </button>
+            <span className="text-sm text-slate-500">
+              {selectedIds.length} selected; export is ordered by meeting date.
+            </span>
+          </div>
+          <ul className="space-y-2">
+            {data.meetings.map((m) => (
+              <MeetingRow
+                key={m.id}
+                meeting={m}
+                selected={selected.has(m.id)}
+                onSelect={(checked) => {
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (checked) next.add(m.id);
+                    else next.delete(m.id);
+                    return next;
+                  });
+                }}
+                onDelete={async () => {
+                  if (!confirm(`Delete meeting "${m.label}"? This cannot be undone.`)) return;
+                  await del.mutateAsync(m.id);
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    next.delete(m.id);
+                    return next;
+                  });
+                }}
+                deleting={del.isPending}
+              />
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
@@ -53,10 +95,14 @@ export function MeetingsListPage() {
 
 function MeetingRow({
   meeting,
+  selected,
+  onSelect,
   onDelete,
   deleting,
 }: {
   meeting: Meeting;
+  selected: boolean;
+  onSelect: (checked: boolean) => void;
   onDelete: () => Promise<void> | void;
   deleting: boolean;
 }) {
@@ -66,6 +112,13 @@ function MeetingRow({
 
   return (
     <li className="bg-white border border-slate-200 rounded-lg p-4 flex items-center justify-between gap-3">
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={(e) => onSelect(e.target.checked)}
+        className="size-4 rounded border-slate-300 text-brand-600"
+        aria-label={`Select ${meeting.label}`}
+      />
       <div className="min-w-0 flex-1">
         {editing ? (
           <form
@@ -123,7 +176,7 @@ function MeetingRow({
               </button>
             </div>
             <p className="text-sm text-slate-500">
-              Status: {meeting.status} · updated {new Date(meeting.updated_at).toLocaleString()}
+              {meeting.owner_email ? `${meeting.owner_email} · ` : ""}{meeting.meeting_date ? `Meeting date: ${meeting.meeting_date} · ` : ""}Status: {meeting.status} · updated {new Date(meeting.updated_at).toLocaleString()}
             </p>
           </>
         )}

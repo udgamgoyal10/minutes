@@ -15,6 +15,7 @@ import { canonicalToken } from "./template-variables.ts";
 export type ApprovedSection = {
   key: string;
   ordinal: number;
+  title: string;
   content_md: string;
   template_body_text?: string;
 };
@@ -25,50 +26,78 @@ export async function renderDocx(args: {
   variables: Record<string, string>;
   sections: ApprovedSection[];
 }): Promise<Uint8Array> {
-  const { templatePath, parsed, variables, sections } = args;
-  const buf = await readFile(templatePath);
+  const { templatePath, variables, sections } = args;
+  return renderDocxBody({
+    templatePath,
+    variables,
+    bodyXml: sectionsToWordXml(sections),
+  });
+}
+
+export async function renderCombinedDocx(args: {
+  templatePath: string;
+  meetings: Array<{ heading: string; sections: ApprovedSection[] }>;
+}): Promise<Uint8Array> {
+  const bodyXml = args.meetings
+    .map((meeting, index) => {
+      const prefix = `${index === 0 ? "" : pageBreakXml()}${headingToWordXml(meeting.heading)}`;
+      return `${prefix}${sectionsToWordXml(meeting.sections)}`;
+    })
+    .join("");
+  return renderDocxBody({ templatePath: args.templatePath, variables: {}, bodyXml });
+}
+
+async function renderDocxBody(args: {
+  templatePath: string;
+  variables: Record<string, string>;
+  bodyXml: string;
+}): Promise<Uint8Array> {
+  const buf = await readFile(args.templatePath);
   const zip = await JSZip.loadAsync(buf);
   const docFile = zip.file("word/document.xml");
   if (!docFile) throw new Error("template missing word/document.xml");
   let xml = await docFile.async("string");
 
-  // 1) Replace section bodies first (so they don't get re-tokenized).
-  //    Look up each section's bodyXml as a substring; if found, replace it
-  //    wholesale with newly rendered paragraphs.
-  const byKey = new Map(sections.map((s) => [s.key, s]));
-  for (const sec of parsed.sections) {
-    const newSec = byKey.get(sec.key);
-    if (!newSec) continue;
-    if (!sec.bodyXml) continue;
-    // If the section content is unchanged from the original template body,
-    // keep the original XML so template formatting (bold headings, lists,
-    // fonts) is preserved exactly.
-    const unchanged =
-      newSec.content_md.trim() === (newSec.template_body_text ?? sec.bodyText).trim();
-    if (unchanged) continue;
-    const rendered = markdownToWordXml(newSec.content_md);
-    if (xml.includes(sec.bodyXml)) {
-      xml = xml.replace(sec.bodyXml, rendered);
-    }
-  }
+  xml = rebuildBody(xml, args.bodyXml);
 
-  // 2) Strip the preamble/meeting-dates cover so the export starts at the
-  //    first section heading. Only safe to remove if it isn't already
-  //    consumed by an "introduction" section that was replaced above.
-  if (parsed.preambleXml && xml.includes(parsed.preambleXml)) {
-    xml = xml.replace(parsed.preambleXml, "");
-  }
+  xml = replacePlaceholders(xml, args.variables);
 
-  // 3) Replace <placeholder> tokens in the resulting xml using variables.
-  xml = replacePlaceholders(xml, variables);
-
-  // 4) Any placeholder that could not be filled (still <…>) is shown in red so
-  //    the reviewer can spot the gaps in the exported document.
   xml = colorizeUnfilledPlaceholders(xml);
 
   zip.file("word/document.xml", xml);
   const out = await zip.generateAsync({ type: "uint8array" });
   return out;
+}
+
+function rebuildBody(xml: string, rendered: string): string {
+  const m = xml.match(/(<w:body\b[^>]*>)([\s\S]*?)(<\/w:body>)/);
+  if (!m) return xml;
+  const bodyOpen = m[1] ?? "<w:body>";
+  const bodyInner = m[2] ?? "";
+  const bodyClose = m[3] ?? "</w:body>";
+  const sectPrMatch = bodyInner.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>\s*$/);
+  const sectPr = sectPrMatch?.[0] ?? "";
+  return xml.replace(m[0], `${bodyOpen}${rendered}${sectPr}${bodyClose}`);
+}
+
+function sectionsToWordXml(sections: ApprovedSection[]): string {
+  const sorted = [...sections].sort((a, b) => a.ordinal - b.ordinal);
+  const hasIntro = sorted.some((section) => section.key === "introduction");
+  return sorted
+    .map((section) => {
+      const title = section.key === "introduction" ? section.title : `${hasIntro ? section.ordinal - 1 : section.ordinal}. ${section.title}`;
+      return `${headingToWordXml(title)}${markdownToWordXml(section.content_md)}`;
+    })
+    .join("");
+}
+
+function headingToWordXml(title: string): string {
+  const baseFont = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="28"/><w:szCs w:val="28"/>';
+  return `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr>${baseFont}<w:b/></w:rPr><w:t xml:space="preserve">${xmlEscape(title)}</w:t></w:r></w:p>`;
+}
+
+function pageBreakXml(): string {
+  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 }
 
 function xmlEscape(s: string): string {

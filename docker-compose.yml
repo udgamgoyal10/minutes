@@ -17,6 +17,8 @@ services:
   frontend:
     build:
       context: ./client
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     depends_on:
       - backend
     ports:

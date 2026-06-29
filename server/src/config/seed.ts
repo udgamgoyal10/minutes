@@ -5,34 +5,43 @@ import { env } from "./env.ts";
 import { parseTemplate } from "../services/template-parser.ts";
 
 async function seedAdmin(): Promise<void> {
-  const existing = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE email = ?")
-    .get(env.adminEmail);
+  const configuredEmail = env.adminEmail.trim().toLowerCase();
+  const existing = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE lower(email) = ?")
+    .get(configuredEmail);
   if (existing) return;
+  const superAdmin = db.query<{ id: number }, []>("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1").get();
+  if (superAdmin && ["admin", "udgam", "udgam@jkp.org.in"].includes(configuredEmail)) return;
   const hash = await Bun.password.hash(env.adminPassword);
   db.run("INSERT INTO users (email, password_hash, role) VALUES (?, ?, 'admin')", [
-    env.adminEmail,
+    configuredEmail,
     hash,
   ]);
-  console.log(`[seed] admin user created: ${env.adminEmail}`);
+  console.log(`[seed] admin user created: ${configuredEmail}`);
 }
 
-// Additional named users provisioned on startup. Idempotent: only created when
-// the username (stored in the email column) does not already exist.
 async function seedUsers(): Promise<void> {
-  const users: Array<{ username: string; password: string; role: string }> = [
-    { username: "dalpana", password: "gurudham1922", role: "admin" },
+  const users: Array<{ email: string; aliases: string[]; password: string; role: string }> = [
+    { email: "udgam@jkp.org.in", aliases: ["admin", "udgam"], password: env.adminPassword, role: "super_admin" },
+    { email: "dalpana@jkp.org.in", aliases: ["dalpana"], password: "gurudham1922", role: "admin" },
   ];
   for (const u of users) {
-    const existing = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE email = ?")
-      .get(u.username);
+    const existing = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE lower(email) = ?")
+      .get(u.email);
     if (existing) continue;
+    const alias = db.query<{ id: number }, string[]>(
+      `SELECT id FROM users WHERE lower(email) IN (${u.aliases.map(() => "?").join(",")}) ORDER BY id LIMIT 1`,
+    ).get(...u.aliases);
+    if (alias) {
+      db.run("UPDATE users SET email = ?, role = ?, updated_at = datetime('now') WHERE id = ?", [u.email, u.role, alias.id]);
+      continue;
+    }
     const hash = await Bun.password.hash(u.password);
     db.run("INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)", [
-      u.username,
+      u.email,
       hash,
       u.role,
     ]);
-    console.log(`[seed] user created: ${u.username}`);
+    console.log(`[seed] user created: ${u.email}`);
   }
 }
 
@@ -81,8 +90,8 @@ async function seedTemplates(): Promise<void> {
 }
 
 export async function runSeeders(): Promise<void> {
-  await seedAdmin();
   await seedUsers();
+  await seedAdmin();
   seedOrganizations();
   await seedTemplates();
 }

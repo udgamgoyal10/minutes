@@ -13,6 +13,7 @@ import { SetupPage } from "./routes/meeting.setup.tsx";
 import { SectionsPage } from "./routes/meeting.sections.tsx";
 import { SectionPage } from "./routes/meeting.section.tsx";
 import { ExportPage } from "./routes/meeting.export.tsx";
+import { AdminUsersPage } from "./routes/admin.users.tsx";
 import { getAccessTokenFromStorage } from "./lib/auth.tsx";
 
 function requireAuthLoader() {
@@ -74,9 +75,15 @@ const exportRoute = createRoute({
   component: ExportPage,
 });
 
+const adminUsersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin/users",
+  component: AdminUsersPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sectionsRoute, sectionRoute, exportRoute]),
+  appRoute.addChildren([indexRoute, newMeetingRoute, setupRoute, sectionsRoute, sectionRoute, exportRoute, adminUsersRoute]),
 ]);
 
 export const router = createRouter({ routeTree });

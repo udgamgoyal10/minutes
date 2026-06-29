@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { FileText, LogOut, Plus } from "lucide-react";
+import { FileText, LogOut, Plus, Users } from "lucide-react";
 import { useAuth } from "../lib/auth.tsx";
 
 export function AppShell() {
@@ -22,6 +22,11 @@ export function AppShell() {
             >
               <Plus className="size-4" /> New meeting
             </Link>
+            {user?.role === "super_admin" && (
+              <Link to="/admin/users" className="flex items-center gap-1 text-slate-600 hover:text-slate-900">
+                <Users className="size-4" /> Users
+              </Link>
+            )}
             <span className="text-slate-500">{user?.email}</span>
             <button
               onClick={() => {

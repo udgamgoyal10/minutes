@@ -118,6 +118,24 @@ function isRosaBoilerplate(text: string): boolean {
   return ROSA_BOILERPLATE_PATTERNS.some((re) => re.test(trimmed));
 }
 
+function normalizeTemplateText(text: string): string {
+  return text
+    .replace(/<He\s*\/\s*she>/gi, "<Managing Trustee Subject Pronoun>")
+    .replace(/\bShe welcomed the other Trustees\b/g, "<Managing Trustee Subject Pronoun> welcomed the other Trustees")
+    .replace(/\bher signatures\b/g, "<Managing Trustee Possessive Pronoun> signatures")
+    .replace(/\bHe added saying\b/g, "<Secretary Subject Pronoun> added saying")
+    .replace(/\bShe further added saying\b/g, "<Managing Trustee Subject Pronoun> further added saying")
+    .replace(/\bhe is also authorized\b/g, "<Secretary Subject Pronoun> is also authorized")
+    .replace(/\bHe was then instructed\b/g, "<Treasurer Subject Pronoun> was then instructed")
+    .replace(/(<Secretary>[\s\S]{0,1200}?)<Treasurer Subject Pronoun> was then instructed/g, "$1<Secretary Subject Pronoun> was then instructed")
+    .replace(/(<Secretary>[\s\S]{0,1200}?)<Managing Trustee Subject Pronoun> brought/g, "$1<Secretary Subject Pronoun> brought")
+    .replace(/\bhe would be responsible\b/g, "<Treasurer Subject Pronoun> would be responsible")
+    .replace(/\bhis favour\b/g, "<Income Tax Representative Possessive Pronoun> favour")
+    .replace(/\bbrought up by her\b/g, "brought up by <Medical Superintendent Object Pronoun>")
+    .replace(/\bby her\s*-/g, "by <Medical Superintendent Object Pronoun> -")
+    .replace(/\bby her\s*–/g, "by <Medical Superintendent Object Pronoun> –");
+}
+
 function removeIntroMeetingDateLines(lines: string[]): string[] {
   const out = [...lines];
   const start = out.findIndex((line) => /^meeting\s+dates\s*:?\s*$/i.test(line.trim()));
@@ -171,7 +189,7 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
   });
 
   const preambleXml = paragraphs.slice(0, preambleEnd).join("");
-  const preambleText = paragraphs.slice(0, preambleEnd).map(paragraphText).join("\n").trim();
+  const preambleText = paragraphs.slice(0, preambleEnd).map((p) => normalizeTemplateText(paragraphText(p))).join("\n").trim();
 
   const introEnd = acc.findIndex((s) => /^approval of proceedings$/i.test(s.title));
   const regularAcc = introEnd >= 0 ? acc.slice(introEnd + 1) : acc;
@@ -180,7 +198,7 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
   if (introEnd >= 0) {
     const introParas = paragraphs.slice(0, acc[introEnd]!.paraIndexEnd);
     const bodyXml = introParas.join("");
-    const bodyText = removeIntroMeetingDateLines(introParas.map(paragraphText)).join("\n").trim();
+    const bodyText = removeIntroMeetingDateLines(introParas.map((p) => normalizeTemplateText(paragraphText(p)))).join("\n").trim();
     sections.push({
       key: "introduction",
       ordinal: 1,
@@ -199,7 +217,7 @@ export async function parseTemplate(docxPath: string): Promise<ParsedTemplate> {
         ? rawBodyParas.filter((p) => !isRosaBoilerplate(paragraphText(p)))
         : rawBodyParas;
     const bodyXml = bodyParas.join("");
-    const bodyText = bodyParas.map(paragraphText).join("\n").trim();
+    const bodyText = bodyParas.map((p) => normalizeTemplateText(paragraphText(p))).join("\n").trim();
     sections.push({
       key: sectionKey,
       ordinal: sections.length + 1,

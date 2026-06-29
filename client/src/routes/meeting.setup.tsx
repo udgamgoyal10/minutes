@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { AlertTriangle, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import {
   useCreateSection,
   useDeleteSection,
@@ -8,8 +8,15 @@ import {
   useProviders,
   useSaveVariableValues,
   useSections,
+  useSectionTemplates,
   useTemplates,
+  useTemplateVariables,
   useUpdateMeeting,
+  useUpdateTemplateVariable,
+  useCreateTemplateVariable,
+  useUpdateVariableValue,
+  useDeleteTemplateVariable,
+  useDeleteVariableValue,
   useVariableValues,
   type Placeholder,
   type ProviderInfo,
@@ -17,6 +24,41 @@ import {
 } from "../lib/api.ts";
 import { StepNav } from "../components/StepNav.tsx";
 import { SectionPicker } from "../components/SectionPicker.tsx";
+
+const GENDER_ROLES = [
+  {
+    baseToken: "trustee-1",
+    genderToken: "managing-trustee-gender",
+    pronounTokens: ["managing-trustee-subject-pronoun", "managing-trustee-object-pronoun", "managing-trustee-possessive-pronoun"],
+  },
+  {
+    baseToken: "secretary",
+    genderToken: "secretary-gender",
+    pronounTokens: ["secretary-subject-pronoun", "secretary-object-pronoun", "secretary-possessive-pronoun"],
+  },
+  {
+    baseToken: "treasurer",
+    genderToken: "treasurer-gender",
+    pronounTokens: ["treasurer-subject-pronoun", "treasurer-object-pronoun", "treasurer-possessive-pronoun"],
+  },
+  {
+    baseToken: "income-tax-representative",
+    genderToken: "income-tax-representative-gender",
+    pronounTokens: ["income-tax-representative-subject-pronoun", "income-tax-representative-object-pronoun", "income-tax-representative-possessive-pronoun"],
+  },
+  {
+    baseToken: "medical-superintendent-of-jkc-mangarh",
+    genderToken: "medical-superintendent-gender",
+    pronounTokens: ["medical-superintendent-subject-pronoun", "medical-superintendent-object-pronoun", "medical-superintendent-possessive-pronoun"],
+  },
+];
+
+const GENDER_METADATA_TOKENS = new Set(GENDER_ROLES.flatMap((role) => [role.genderToken, ...role.pronounTokens]));
+const GENDER_ROLE_BY_BASE_TOKEN = new Map(GENDER_ROLES.map((role) => [role.baseToken, role]));
+
+function isGenderMetadataToken(token: string): boolean {
+  return GENDER_METADATA_TOKENS.has(token);
+}
 
 export function SetupPage() {
   const { id } = useParams({ strict: false });
@@ -26,6 +68,7 @@ export function SetupPage() {
   const templatesQ = useTemplates();
   const providersQ = useProviders();
   const sectionsQ = useSections(meetingId);
+  const templateVariablesQ = useTemplateVariables();
   const update = useUpdateMeeting(meetingId);
   const createSection = useCreateSection(meetingId);
   const deleteSection = useDeleteSection(meetingId);
@@ -33,6 +76,7 @@ export function SetupPage() {
   const saveVariableValues = useSaveVariableValues();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyAddKey, setBusyAddKey] = useState<string | null>(null);
+  const [variableManagerOpen, setVariableManagerOpen] = useState(false);
 
   const meeting = meetingQ.data?.meeting;
   const template = useMemo(
@@ -61,7 +105,7 @@ export function SetupPage() {
     if (!model || !selected.models.includes(model)) setModel(selected.models[0] ?? "");
   }, [providersQ.data?.providers, provider, model]);
 
-  const placeholders = template?.parsed.globalPlaceholders ?? [];
+  const placeholders = templateVariablesQ.data?.variables ?? template?.parsed.globalPlaceholders ?? [];
 
   // Tokens that map a "date" placeholder to the derived day/month/year tokens
   // the template actually contains. If any of the derived tokens are used by a
@@ -93,17 +137,31 @@ export function SetupPage() {
     return used;
   }, [sectionsQ.data?.sections]);
 
+  const requiredGenderByBaseToken = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const role of GENDER_ROLES) {
+      if (usedTokens.has(role.genderToken) || role.pronounTokens.some((token) => usedTokens.has(token))) {
+        map.set(role.baseToken, role.genderToken);
+      }
+    }
+    return map;
+  }, [usedTokens]);
+
   const visiblePlaceholders = useMemo(() => {
     return placeholders.filter((p) => {
-      // Required variables (trust + office bearers) always show for every meeting.
+      if (isGenderMetadataToken(p.token)) return false;
       if (p.required) return true;
+      if (requiredGenderByBaseToken.has(p.token)) return true;
       const aliases = DATE_ALIASES[p.token];
       if (aliases) return aliases.some((a) => usedTokens.has(a));
       return usedTokens.has(p.token);
     });
-  }, [placeholders, usedTokens]);
+  }, [placeholders, requiredGenderByBaseToken, usedTokens]);
 
   const savedValues = variableValuesQ.data?.values ?? {};
+  const savedGenders = variableValuesQ.data?.genders ?? {};
+  const selectedSections = sectionsQ.data?.sections ?? [];
+  const hasIntro = selectedSections.some((s) => s.section_key === "introduction");
 
   return (
     <div>
@@ -117,7 +175,16 @@ export function SetupPage() {
         <DateField label="This meeting date" value={meetingDate} onChange={setMeetingDate} />
       </div>
 
-      <h2 className="text-lg font-medium mt-8 mb-3">Template variables</h2>
+      <div className="mt-8 mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-medium">Template variables</h2>
+        <button
+          type="button"
+          onClick={() => setVariableManagerOpen(true)}
+          className="text-sm border border-slate-300 rounded-md px-3 py-1.5 hover:bg-slate-50"
+        >
+          Manage variables
+        </button>
+      </div>
       <p className="text-sm text-slate-500 mb-3">
         Fill the placeholders found in the template header. Anything left blank stays as
         <code className="mx-1">&lt;…&gt;</code> in the final document.
@@ -128,16 +195,36 @@ export function SetupPage() {
             No template variables are referenced by the sections currently selected.
           </p>
         )}
-        {visiblePlaceholders.map((p) => (
-          <VariableField
-            key={p.token}
-            placeholder={p}
-            value={vars[p.token] ?? ""}
-            savedValues={savedValues[p.token] ?? []}
-            onChange={(v) => setVars({ ...vars, [p.token]: v })}
-          />
-        ))}
+        {visiblePlaceholders.map((p) => {
+          const genderToken = requiredGenderByBaseToken.get(p.token);
+          return (
+            <VariableField
+              key={p.token}
+              placeholder={p}
+              value={vars[p.token] ?? ""}
+              savedValues={savedValues[p.token] ?? []}
+              savedGenders={savedGenders[p.token] ?? {}}
+              gender={genderToken ? vars[genderToken] ?? "" : undefined}
+              genderToken={genderToken}
+              onChange={(v, storedGender) => {
+                setVars((prev) => {
+                  const next = { ...prev, [p.token]: v };
+                  if (genderToken && storedGender) next[genderToken] = storedGender;
+                  return next;
+                });
+              }}
+              onChangeGender={genderToken ? (gender) => setVars((prev) => ({ ...prev, [genderToken]: gender })) : undefined}
+            />
+          );
+        })}
       </div>
+
+      <TemplateVariableManager
+        open={variableManagerOpen}
+        onClose={() => setVariableManagerOpen(false)}
+        savedValues={savedValues}
+        savedGenders={savedGenders}
+      />
 
       <h2 className="text-lg font-medium mt-8 mb-3">Sections</h2>
       <p className="text-sm text-slate-500 mb-3">
@@ -145,14 +232,14 @@ export function SetupPage() {
         Remove ones you don’t need, or add more from any template before moving to the editor.
       </p>
       <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
-        {(sectionsQ.data?.sections ?? []).length === 0 && (
+        {selectedSections.length === 0 && (
           <p className="p-4 text-sm text-slate-500">No sections in this meeting yet.</p>
         )}
-        {(sectionsQ.data?.sections ?? []).map((s) => (
+        {selectedSections.map((s) => (
           <div key={s.section_key} className="flex items-start gap-3 px-4 py-2.5">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-400">{s.ordinal}.</span>
+                <span className="text-xs text-slate-400">{s.section_key === "introduction" ? "" : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}</span>
                 <span className="text-sm font-medium text-slate-900">{s.title}</span>
               </div>
               {s.required_sources.length > 0 && (
@@ -237,7 +324,10 @@ export function SetupPage() {
             // dropdown options on future meetings.
             const entries = visiblePlaceholders
               .filter((p) => p.kind !== "date")
-              .map((p) => ({ token: p.token, value: (vars[p.token] ?? "").trim() }))
+              .map((p) => {
+                const genderToken = requiredGenderByBaseToken.get(p.token);
+                return { token: p.token, value: (vars[p.token] ?? "").trim(), gender: genderToken ? vars[genderToken] : undefined };
+              })
               .filter((e) => e.value.length > 0);
             if (entries.length) await saveVariableValues.mutateAsync(entries).catch(() => {});
             navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } });
@@ -247,6 +337,254 @@ export function SetupPage() {
         >
           Save & continue →
         </button>
+      </div>
+    </div>
+  );
+}
+
+
+function TemplateVariableManager({
+  open,
+  onClose,
+  savedValues,
+  savedGenders,
+}: {
+  open: boolean;
+  onClose: () => void;
+  savedValues: Record<string, string[]>;
+  savedGenders: Record<string, Record<string, string>>;
+}) {
+  const variablesQ = useTemplateVariables();
+  const sectionsQ = useSectionTemplates();
+  const createVariable = useCreateTemplateVariable();
+  const updateVariable = useUpdateTemplateVariable();
+  const deleteVariable = useDeleteTemplateVariable();
+  const updateValue = useUpdateVariableValue();
+  const deleteValue = useDeleteVariableValue();
+  const variables = (variablesQ.data?.variables ?? []).filter((v) => !isGenderMetadataToken(v.token));
+  const sections = sectionsQ.data?.sections ?? [];
+  const [editing, setEditing] = useState<Placeholder | "new" | null>(null);
+  const [raw, setRaw] = useState("");
+  const [kind, setKind] = useState<"text" | "date">("text");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [valueEdits, setValueEdits] = useState<Record<string, string>>({});
+  const [valueGenderEdits, setValueGenderEdits] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  const currentToken = editing && editing !== "new" ? editing.token : "";
+  const currentValues = currentToken ? savedValues[currentToken] ?? [] : [];
+  const currentSupportsGender = GENDER_ROLE_BY_BASE_TOKEN.has(currentToken);
+  const busy = createVariable.isPending || updateVariable.isPending || deleteVariable.isPending;
+
+  function startEdit(v: Placeholder | "new") {
+    setEditing(v);
+    setError(null);
+    if (v === "new") {
+      setRaw("");
+      setKind("text");
+      setSelected(new Set());
+      setValueEdits({});
+      setValueGenderEdits({});
+    } else {
+      setRaw(v.raw);
+      setKind(v.kind === "date" ? "date" : "text");
+      setSelected(new Set(v.section_keys ?? []));
+      setValueEdits(Object.fromEntries((savedValues[v.token] ?? []).map((value) => [value, value])));
+      setValueGenderEdits(Object.fromEntries((savedValues[v.token] ?? []).map((value) => [value, savedGenders[v.token]?.[value] ?? ""])));
+    }
+  }
+
+  function toggleSection(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function deleteCurrentVariable() {
+    if (!editing || editing === "new") return;
+    if (!confirm(`Delete template variable "${editing.raw}"? This will also delete its stored values.`)) return;
+    try {
+      await deleteVariable.mutateAsync(editing.token);
+      setEditing(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function saveVariable() {
+    const section_keys = [...selected];
+    if (!raw.trim()) {
+      setError("Variable name is required.");
+      return;
+    }
+    if (!section_keys.length) {
+      setError("Map this variable to at least one section template.");
+      return;
+    }
+    try {
+      if (editing === "new") await createVariable.mutateAsync({ raw, kind, section_keys });
+      else if (editing) await updateVariable.mutateAsync({ token: editing.token, raw, kind, section_keys });
+      setEditing(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+          <h2 className="text-lg font-semibold">Manage template variables</h2>
+          <button onClick={onClose} className="p-1 rounded-md text-slate-500 hover:bg-slate-100" aria-label="Close">
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="grid grid-cols-[18rem_1fr] min-h-0 flex-1">
+          <aside className="border-r border-slate-100 overflow-auto p-3 space-y-1">
+            <button
+              type="button"
+              onClick={() => startEdit("new")}
+              className="w-full text-left text-sm rounded-md px-3 py-2 bg-brand-600 text-white hover:bg-brand-700"
+            >
+              + New variable
+            </button>
+            {variables.map((v) => (
+              <button
+                key={v.token}
+                type="button"
+                onClick={() => startEdit(v)}
+                className={`w-full text-left text-sm rounded-md px-3 py-2 ${editing !== "new" && editing?.token === v.token ? "bg-brand-50 text-brand-700" : "hover:bg-slate-50 text-slate-700"}`}
+              >
+                <span className="block font-medium">{v.raw}</span>
+                <span className="block text-[10px] text-slate-400">{v.token}</span>
+              </button>
+            ))}
+          </aside>
+          <main className="overflow-auto p-5 space-y-4">
+            {!editing && <p className="text-sm text-slate-500">Select a variable to edit it, or create a new one.</p>}
+            {editing && (
+              <>
+                <div className="grid grid-cols-[1fr_10rem] gap-3">
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700">Variable name</span>
+                    <input
+                      value={raw}
+                      onChange={(e) => setRaw(e.target.value)}
+                      className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                      placeholder="e.g. Caretaker of Gardens"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700">Type</span>
+                    <select
+                      value={kind}
+                      onChange={(e) => setKind(e.target.value as "text" | "date")}
+                      className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
+                    >
+                      <option value="text">Text</option>
+                      <option value="date">Date</option>
+                    </select>
+                  </label>
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-slate-700">Mapped section templates</span>
+                  <p className="text-xs text-slate-500 mb-2">At least one section template is required.</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 max-h-56 overflow-auto border border-slate-200 rounded-md p-3">
+                    {sections.map((s) => (
+                      <label key={`${s.template_slug}:${s.key}`} className="flex items-start gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(s.key)}
+                          onChange={() => toggleSection(s.key)}
+                          className="mt-0.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        />
+                        <span>
+                          {s.title}
+                          <span className="block text-[10px] text-slate-400">{s.template_title}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {editing !== "new" && currentToken && (
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">Stored values</span>
+                    <div className="mt-2 space-y-2">
+                      {currentValues.length === 0 && <p className="text-xs text-slate-500">No stored values yet.</p>}
+                      {currentValues.map((value) => (
+                        <div key={value} className="flex gap-2">
+                          <input
+                            value={valueEdits[value] ?? value}
+                            onChange={(e) => setValueEdits({ ...valueEdits, [value]: e.target.value })}
+                            className="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+                          />
+                          {currentSupportsGender && (
+                            <select
+                              value={valueGenderEdits[value] ?? ""}
+                              onChange={(e) => setValueGenderEdits({ ...valueGenderEdits, [value]: e.target.value })}
+                              className="w-28 border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"
+                            >
+                              <option value="">Gender</option>
+                              <option value="male">Male</option>
+                              <option value="female">Female</option>
+                            </select>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => updateValue.mutate({ token: currentToken, old_value: value, value: valueEdits[value] ?? value, gender: currentSupportsGender ? valueGenderEdits[value] ?? "" : undefined })}
+                            className="text-xs border border-slate-300 rounded-md px-2 hover:bg-slate-50"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteValue.mutate({ token: currentToken, value })}
+                            className="text-xs border border-rose-200 text-rose-600 rounded-md px-2 hover:bg-rose-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {error && <p className="text-sm text-rose-600">{error}</p>}
+                <div className="flex justify-between gap-2 border-t border-slate-100 pt-3">
+                  <div>
+                    {editing !== "new" && (
+                      <button
+                        type="button"
+                        onClick={deleteCurrentVariable}
+                        disabled={busy}
+                        className="text-sm border border-rose-200 text-rose-600 rounded-md px-3 py-1.5 hover:bg-rose-50 disabled:opacity-50"
+                      >
+                        Delete variable
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                  <button type="button" onClick={() => setEditing(null)} className="text-sm text-slate-600 px-3 py-1.5">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveVariable}
+                    disabled={busy}
+                    className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+                  >
+                    Save variable
+                  </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </main>
+        </div>
       </div>
     </div>
   );
@@ -293,12 +631,20 @@ function VariableField({
   placeholder,
   value,
   savedValues,
+  savedGenders,
+  gender,
+  genderToken,
   onChange,
+  onChangeGender,
 }: {
   placeholder: Placeholder;
   value: string;
   savedValues: string[];
-  onChange: (v: string) => void;
+  savedGenders: Record<string, string>;
+  gender?: string;
+  genderToken?: string;
+  onChange: (v: string, storedGender?: string) => void;
+  onChangeGender?: (v: string) => void;
 }) {
   const isDate = placeholder.kind === "date";
   // "adding" mode reveals a free-text input to enter a brand-new value.
@@ -334,24 +680,38 @@ function VariableField({
   const options = [...savedValues];
   if (value && !options.includes(value)) options.unshift(value);
 
+  const genderControl = genderToken && onChangeGender ? (
+    <select
+      value={gender ?? ""}
+      onChange={(e) => onChangeGender(e.target.value)}
+      className="mt-1 w-24 border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"
+      title="Gender for pronouns"
+    >
+      <option value="">Gender</option>
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+    </select>
+  ) : null;
+
   return (
     <label className="block">
       {label}
       {useFreeText ? (
-        <div className="mt-1 flex gap-1">
+        <div className="flex gap-1">
           <input
             type="text"
             autoFocus={adding}
             value={value}
             placeholder="Enter a value"
-            onChange={(e) => onChange(e.target.value)}
-            className="flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
+            onChange={(e) => onChange(e.target.value, savedGenders[e.target.value])}
+            className="mt-1 flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm"
           />
+          {genderControl}
           {options.length > 0 && (
             <button
               type="button"
               onClick={() => setAdding(false)}
-              className="text-xs text-slate-500 hover:text-slate-800 px-2 border border-slate-200 rounded-md"
+              className="mt-1 text-xs text-slate-500 hover:text-slate-800 px-2 border border-slate-200 rounded-md"
               title="Pick from saved values"
             >
               List
@@ -359,7 +719,7 @@ function VariableField({
           )}
         </div>
       ) : (
-        <div className="mt-1 flex gap-1">
+        <div className="flex gap-1">
           <select
             value={value}
             onChange={(e) => {
@@ -367,10 +727,10 @@ function VariableField({
                 setAdding(true);
                 onChange("");
               } else {
-                onChange(e.target.value);
+                onChange(e.target.value, savedGenders[e.target.value]);
               }
             }}
-            className="flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white"
+            className="mt-1 flex-1 w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white"
           >
             <option value="">— select —</option>
             {options.map((opt) => (
@@ -380,6 +740,7 @@ function VariableField({
             ))}
             <option value="__add__">+ Add new value…</option>
           </select>
+          {genderControl}
         </div>
       )}
     </label>

@@ -9,7 +9,9 @@ import {
   useMeeting,
   useProviders,
   useReorderSections,
+  useResetSectionPrompt,
   useRevertSection,
+  useSaveSectionPrompt,
   useSectionPrompt,
   useSections,
   useSources,
@@ -18,6 +20,7 @@ import {
   type SectionDraft,
   type SectionTemplate,
 } from "../lib/api.ts";
+import { getAccessTokenFromStorage } from "../lib/auth.tsx";
 import { StepNav } from "../components/StepNav.tsx";
 import { SectionSourcePanel } from "../components/SectionSourcePanel.tsx";
 import { SectionPicker } from "../components/SectionPicker.tsx";
@@ -53,6 +56,7 @@ export function SectionPage() {
   }, [sectionKey]);
 
   const sections = sectionsQ.data?.sections ?? [];
+  const hasIntro = sections.some((s) => s.section_key === "introduction");
   const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
   const idx = sections.findIndex((s) => s.section_key === sectionKey);
   const next = idx >= 0 && idx < sections.length - 1 ? sections[idx + 1] : null;
@@ -64,16 +68,99 @@ export function SectionPage() {
   const [showPrompt, setShowPrompt] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [promptDirty, setPromptDirty] = useState(false);
+  const [autosaveState, setAutosaveState] = useState<"saved" | "idle" | "saving" | "error">("saved");
+  const [autosaveError, setAutosaveError] = useState("");
+  const latestContentRef = useRef("");
+  const lastSavedRef = useRef({ key: "", content: "" });
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftKey = `minutes.sectionDraft.${meetingId}.${sectionKey}`;
 
   const promptQ = useSectionPrompt(meetingId, sectionKey);
+  const savePrompt = useSaveSectionPrompt(meetingId, sectionKey);
+  const resetPrompt = useResetSectionPrompt(meetingId, sectionKey);
   const defaultPrompt = promptQ.data?.prompt ?? "";
 
   const isEnterpriseProvider =
     providersQ.data?.providers.find((p) => p.id === provider)?.category === "enterprise";
 
   useEffect(() => {
-    if (section) setContent(section.preview_md || section.content_md);
-  }, [section?.id, section?.preview_md]);
+    if (!section) return;
+    const next = section.preview_md || section.content_md;
+    const localDraft = loadLocalSectionDraft(draftKey);
+    const restored = localDraft != null && localDraft !== next ? localDraft : next;
+    setContent(restored);
+    latestContentRef.current = restored;
+    lastSavedRef.current = { key: section.section_key, content: next };
+    setAutosaveState(restored === next ? "saved" : "idle");
+    setAutosaveError("");
+  }, [section?.id, section?.section_key, draftKey]);
+
+  useEffect(() => {
+    latestContentRef.current = content;
+    if (!section || lastSavedRef.current.key !== section.section_key) return;
+    if (content === lastSavedRef.current.content) {
+      clearLocalSectionDraft(draftKey);
+    } else {
+      saveLocalSectionDraft(draftKey, content);
+    }
+  }, [content, section, draftKey]);
+
+  useEffect(() => {
+    if (!section) return;
+    const key = section.section_key;
+    if (lastSavedRef.current.key !== key) return;
+    if (content === lastSavedRef.current.content) {
+      setAutosaveState("saved");
+      return;
+    }
+    setAutosaveState("idle");
+    setAutosaveError("");
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(async () => {
+      const next = latestContentRef.current;
+      if (lastSavedRef.current.key !== key || next === lastSavedRef.current.content) return;
+      setAutosaveState("saving");
+      try {
+        await update.mutateAsync({ key, content_md: next });
+        if (currentKeyRef.current === key && latestContentRef.current === next) {
+          lastSavedRef.current = { key, content: next };
+          clearLocalSectionDraft(draftKey);
+          setAutosaveState("saved");
+        }
+      } catch (err) {
+        setAutosaveError((err as Error).message);
+        setAutosaveState("error");
+      }
+    }, 1200);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [content, section?.section_key]);
+
+  useEffect(() => {
+    const flush = () => {
+      const key = lastSavedRef.current.key;
+      const next = latestContentRef.current;
+      if (!key || next === lastSavedRef.current.content) return;
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      saveLocalSectionDraft(`minutes.sectionDraft.${meetingId}.${key}`, next);
+      const token = getAccessTokenFromStorage();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (token) headers.authorization = `Bearer ${token}`;
+      void fetch(`/api/meetings/${meetingId}/sections/${encodeURIComponent(key)}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ content_md: next }),
+        keepalive: true,
+      });
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [meetingId]);
 
   // Reset the editable prompt and the per-section "Revise with AI" instruction
   // whenever the section changes, so text typed for one section never bleeds
@@ -153,7 +240,7 @@ export function SectionPage() {
                     isActive ? "text-brand-700" : "text-slate-700"
                   }`}
                 >
-                  <span className="text-xs text-slate-400 mr-2">{s.ordinal}.</span>
+                  <span className="text-xs text-slate-400 mr-2">{s.section_key === "introduction" ? "" : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}</span>
                   <span>{s.title}</span>
                   <StatusPill status={s.status} />
                   {pendingKeys[s.section_key] && (
@@ -290,6 +377,12 @@ export function SectionPage() {
             rows={20}
             className="w-full border border-slate-300 rounded-md p-3 font-mono text-sm"
           />
+          <div className="mt-1 text-xs text-slate-500">
+            {autosaveState === "saving" && "Autosaving…"}
+            {autosaveState === "idle" && "Unsaved changes will autosave shortly."}
+            {autosaveState === "saved" && "All section edits saved."}
+            {autosaveState === "error" && `Autosave failed: ${autosaveError || "please use Save draft"}`}
+          </div>
 
           <div className="mt-4 bg-white border border-slate-200 rounded-lg p-4 space-y-3">
             <p className="text-sm font-medium flex items-center gap-2">
@@ -304,8 +397,8 @@ export function SectionPage() {
             <textarea
               value={userPrompt}
               onChange={(e) => setUserPrompt(e.target.value)}
-              rows={2}
-              placeholder="Extra instructions (optional). Leave blank to use the default section prompt."
+              rows={4}
+              placeholder="Extra instructions or pasted source text. Large pasted text will be treated as source material for this run."
               className="w-full border border-slate-300 rounded-md p-2 text-sm"
             />
 
@@ -328,7 +421,7 @@ export function SectionPage() {
               {showPrompt && (
                 <div className="px-3 pb-3 space-y-2">
                   <p className="text-[11px] text-slate-500">
-                    This is the exact prompt sent to the AI. Edit it to change behaviour for this run,
+                    This is the default prompt sent to the AI for this section. Save it to reuse it whenever this section is generated,
                     or reset to the system default. By default the AI only changes the
                     <span className="font-mono"> &lt;…&gt; </span> placeholder locations.
                   </p>
@@ -341,17 +434,37 @@ export function SectionPage() {
                     rows={12}
                     className="w-full border border-slate-300 rounded-md p-2 font-mono text-xs"
                   />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setPromptDirty(false);
-                      const fresh = await promptQ.refetch();
-                      setPromptText(fresh.data?.prompt ?? defaultPrompt);
-                    }}
-                    className="text-xs text-brand-700 hover:underline flex items-center gap-1"
-                  >
-                    <RotateCcw className="size-3.5" /> Reset to default prompt
-                  </button>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const saved = await savePrompt.mutateAsync(promptText);
+                        setPromptText(saved.prompt);
+                        setPromptDirty(false);
+                      }}
+                      disabled={savePrompt.isPending || !promptText.trim()}
+                      className="text-xs bg-brand-600 hover:bg-brand-700 text-white rounded-md px-2.5 py-1.5 disabled:opacity-50"
+                    >
+                      {savePrompt.isPending ? "Saving…" : "Save as default prompt"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const reset = await resetPrompt.mutateAsync();
+                        setPromptText(reset.prompt);
+                        setPromptDirty(false);
+                      }}
+                      disabled={resetPrompt.isPending}
+                      className="text-xs text-brand-700 hover:underline flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <RotateCcw className="size-3.5" /> {resetPrompt.isPending ? "Resetting…" : "Reset to system default"}
+                    </button>
+                    {promptQ.data?.saved_prompt && (
+                      <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
+                        saved default
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -405,7 +518,12 @@ export function SectionPage() {
                   onClick={async () => {
                     const result = await revert.mutateAsync(section.section_key);
                     const next = result.section?.preview_md ?? result.section?.content_md;
-                    if (next != null) setContent(next);
+                    if (next != null) {
+                      setContent(next);
+                      lastSavedRef.current = { key: section.section_key, content: next };
+                      clearLocalSectionDraft(draftKey);
+                      setAutosaveState("saved");
+                    }
                   }}
                   disabled={revert.isPending || !section.template_body_text}
                   title="Replace current text with the original template wording"
@@ -437,7 +555,14 @@ export function SectionPage() {
                       const next = result.section?.preview_md ?? result.section?.content_md;
                       // Only fill the editor if the user is still on the section the
                       // run was started for.
-                      if (next != null && currentKeyRef.current === key) setContent(next);
+                      if (next != null) {
+                        lastSavedRef.current = { key, content: next };
+                        clearLocalSectionDraft(`minutes.sectionDraft.${meetingId}.${key}`);
+                        if (currentKeyRef.current === key) {
+                          setContent(next);
+                          setAutosaveState("saved");
+                        }
+                      }
                     } catch (err) {
                       setGenErrors((m) => ({ ...m, [key]: (err as Error).message }));
                     } finally {
@@ -466,7 +591,12 @@ export function SectionPage() {
           <div className="mt-6 flex justify-between items-center">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => update.mutate({ key: section.section_key, content_md: content })}
+                onClick={async () => {
+                  await update.mutateAsync({ key: section.section_key, content_md: content });
+                  lastSavedRef.current = { key: section.section_key, content };
+                  clearLocalSectionDraft(draftKey);
+                  setAutosaveState("saved");
+                }}
                 disabled={update.isPending}
                 className="text-sm text-slate-700 underline"
               >
@@ -497,11 +627,15 @@ export function SectionPage() {
             <div className="flex gap-2">
               <button
                 onClick={async () => {
+                  if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
                   await update.mutateAsync({
                     key: section.section_key,
                     content_md: content,
                     status: "approved",
                   });
+                  lastSavedRef.current = { key: section.section_key, content };
+                  clearLocalSectionDraft(draftKey);
+                  setAutosaveState("saved");
                   if (next) {
                     navigate({
                       to: "/m/$id/section/$key",
@@ -532,4 +666,28 @@ function StatusPill({ status }: { status: SectionDraft["status"] }) {
         ? "bg-amber-100 text-amber-700"
         : "bg-slate-100 text-slate-500";
   return <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{status}</span>;
+}
+
+function loadLocalSectionDraft(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalSectionDraft(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    return;
+  }
+}
+
+function clearLocalSectionDraft(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    return;
+  }
 }

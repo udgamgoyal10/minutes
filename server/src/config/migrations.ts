@@ -905,6 +905,206 @@ const migrations: Migration[] = [
       tx();
     },
   },
+  {
+    id: 19,
+    name: "user_template_variables",
+    up: () => {
+      db.exec(`
+        CREATE TABLE user_template_variables (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token TEXT NOT NULL,
+          raw TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'text',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(user_id, token)
+        );
+        CREATE INDEX idx_user_template_variables_user
+          ON user_template_variables(user_id);
+
+        CREATE TABLE user_template_variable_mappings (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token TEXT NOT NULL,
+          section_key TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY(user_id, token, section_key)
+        );
+        CREATE INDEX idx_user_template_variable_mappings_user_section
+          ON user_template_variable_mappings(user_id, section_key);
+      `);
+    },
+  },
+  {
+    id: 20,
+    name: "template_variable_mapping_exclusions",
+    up: () => {
+      db.exec(`
+        CREATE TABLE user_template_variable_mapping_exclusions (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token TEXT NOT NULL,
+          section_key TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY(user_id, token, section_key)
+        );
+        CREATE INDEX idx_user_template_variable_mapping_exclusions_user_section
+          ON user_template_variable_mapping_exclusions(user_id, section_key);
+      `);
+    },
+  },
+  {
+    id: 21,
+    name: "section_prompt_overrides",
+    up: () => {
+      db.exec(`
+        CREATE TABLE section_prompt_overrides (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+          section_key TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY(user_id, meeting_id, section_key)
+        );
+        CREATE INDEX idx_section_prompt_overrides_meeting
+          ON section_prompt_overrides(user_id, meeting_id);
+      `);
+    },
+  },
+  {
+    id: 22,
+    name: "source_section_keys",
+    up: () => {
+      db.exec("ALTER TABLE sources ADD COLUMN section_key TEXT;");
+      db.run("UPDATE sources SET section_key = substr(label, 11) WHERE section_key IS NULL AND label LIKE '__section:%'");
+      const sources = db.query<{ id: number; meeting_id: number; label: string | null }, []>(
+        "SELECT id, meeting_id, label FROM sources WHERE section_key IS NULL AND label IS NOT NULL AND label NOT LIKE '__section:%'",
+      ).all();
+      const sections = db.query<{ section_key: string; required_sources_json: string }, [number]>(
+        "SELECT section_key, required_sources_json FROM section_drafts WHERE meeting_id = ?",
+      );
+      const update = db.prepare("UPDATE sources SET section_key = ? WHERE id = ?");
+      const tx = db.transaction(() => {
+        for (const source of sources) {
+          const matches = sections.all(source.meeting_id).filter((section) => {
+            try {
+              const labels = JSON.parse(section.required_sources_json) as unknown;
+              return Array.isArray(labels) && labels.includes(source.label);
+            } catch {
+              return false;
+            }
+          });
+          if (matches.length === 1) update.run(matches[0]!.section_key, source.id);
+        }
+      });
+      tx();
+    },
+  },
+  {
+    id: 23,
+    name: "refresh_templates_pronoun_variables",
+    up: async () => {
+      const templates = db.query<{
+        id: number;
+        docx_path: string;
+        parsed_json: string;
+      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const existingStmt = db.query<{
+        id: number;
+        meeting_id: number;
+        section_key: string;
+        content_md: string;
+        template_body_text: string;
+        status: string;
+        last_ai_provider: string | null;
+      }, [number]>(
+        "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
+      );
+      const updateExisting = db.prepare(
+        `UPDATE section_drafts
+         SET title = ?,
+             content_md = ?,
+             template_body_text = ?,
+             required_variables_json = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+      );
+      for (const template of templates) {
+        if (!existsSync(template.docx_path)) continue;
+        const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        const parsed = await parseTemplate(template.docx_path);
+        db.run("UPDATE meeting_templates SET title = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          JSON.stringify(parsed),
+          template.id,
+        ]);
+        const meetings = db.query<{ id: number }, [number]>(
+          "SELECT id FROM meetings WHERE template_id = ?",
+        ).all(template.id);
+        const tx = db.transaction(() => {
+          for (const meeting of meetings) {
+            const rows = existingStmt.all(meeting.id);
+            const byKey = new Map(rows.map((row) => [row.section_key, row]));
+            for (const section of parsed.sections) {
+              const existing = byKey.get(section.key);
+              if (!existing) continue;
+              const oldSection = oldParsed.sections.find((s) => s.key === section.key);
+              const canReplaceContent = !existing.content_md ||
+                existing.content_md === oldSection?.bodyText ||
+                existing.content_md === existing.template_body_text ||
+                (existing.status === "pending" && !existing.last_ai_provider);
+              updateExisting.run(
+                section.title,
+                canReplaceContent ? section.bodyText : existing.content_md,
+                section.bodyText,
+                JSON.stringify(inferRequiredVariables(section.bodyText, section.title)),
+                existing.id,
+              );
+            }
+          }
+        });
+        tx();
+      }
+    },
+  },
+  {
+    id: 24,
+    name: "user_email_2fa_super_admin",
+    up: () => {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN two_factor_secret TEXT;
+        ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE users ADD COLUMN updated_at TEXT;
+      `);
+      db.run("UPDATE users SET updated_at = COALESCE(updated_at, created_at, datetime('now'))");
+      const linkUser = (candidates: string[], email: string, role: string) => {
+        const target = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE lower(email) = ?").get(email);
+        const source = target ?? db.query<{ id: number }, string[]>(
+          `SELECT id FROM users WHERE lower(email) IN (${candidates.map(() => "?").join(",")}) ORDER BY id LIMIT 1`,
+        ).get(...candidates);
+        if (!source) return;
+        db.run("UPDATE users SET email = ?, role = ?, updated_at = datetime('now') WHERE id = ?", [email, role, source.id]);
+      };
+      linkUser(["admin", "udgam", "udgam@jkp.org.in"], "udgam@jkp.org.in", "super_admin");
+      linkUser(["dalpana", "dalpana@jkp.org.in"], "dalpana@jkp.org.in", "admin");
+    },
+  },
+  {
+    id: 25,
+    name: "google_oauth_user_binding",
+    up: () => {
+      db.exec("ALTER TABLE users ADD COLUMN google_sub TEXT;");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL;");
+    },
+  },
+  {
+    id: 26,
+    name: "template_variable_value_gender",
+    up: () => {
+      db.exec("ALTER TABLE template_variable_values ADD COLUMN gender TEXT;");
+    },
+  },
+
 ];
 
 export async function runMigrations(): Promise<void> {

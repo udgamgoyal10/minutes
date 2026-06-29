@@ -57,7 +57,8 @@ const SECTION_GUIDANCE: Record<string, (ctx: PromptContext) => string> = {
     expenseGuidance(ctx, "garden"),
   "progress-report-on-construction-projects": () =>
     "Section-specific guidance:\n" +
-    "- Summarise the construction activity and progress made during the period.\n" +
+    "- Summarise the construction activity and progress made during the period from the free-form source text, uploaded source text, or pasted source material.\n" +
+    "- If the source is organised by month and project, preserve the month/project meaning but condense repeated expense wording into formal meeting-minutes prose.\n" +
     `- ${NO_PII_EXPENSES}\n`,
   "investment-chart": () =>
     "Section-specific guidance:\n" +

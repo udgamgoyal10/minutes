@@ -4,6 +4,14 @@ import { env } from "../config/env.ts";
 
 export type AuthUser = { id: number; email: string; role: string };
 
+export function isAdminRole(role: string): boolean {
+  return role === "admin" || role === "super_admin";
+}
+
+export function isSuperAdmin(role: string): boolean {
+  return role === "super_admin";
+}
+
 declare module "hono" {
   interface ContextVariableMap {
     user: AuthUser;

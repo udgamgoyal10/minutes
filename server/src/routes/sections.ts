@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../config/db.ts";
-import { requireAuth } from "../middleware/auth.ts";
+import { isAdminRole, requireAuth } from "../middleware/auth.ts";
 import { generate, type ProviderId } from "../services/ai/index.ts";
 import { buildPrompt, type PromptContext } from "../services/prompts/index.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
@@ -35,6 +35,8 @@ r.get("/example-sources/download", (c) => {
   });
 });
 
+type MappingRow = { token: string };
+
 type SectionRow = {
   id: number;
   meeting_id: number;
@@ -66,7 +68,22 @@ type MeetingCtxRow = {
   org_name: string;
 };
 
-function loadMeetingCtx(meetingId: number, userId: number): MeetingCtxRow | null {
+type SectionPromptOverrideRow = {
+  prompt: string;
+};
+
+function loadMeetingCtx(meetingId: number, user: { id: number; role: string }): MeetingCtxRow | null {
+  if (isAdminRole(user.role)) {
+    return db.query<MeetingCtxRow, [number]>(
+      `SELECT m.id, m.template_id, m.user_id, m.variables_json, m.meeting_date,
+              m.previous_meeting_date, m.label, m.ai_provider, m.ai_model,
+              t.parsed_json, o.name AS org_name
+       FROM meetings m
+       JOIN meeting_templates t ON t.id = m.template_id
+       JOIN organizations o ON o.id = t.organization_id
+       WHERE m.id = ?`,
+    ).get(meetingId) ?? null;
+  }
   return db.query<MeetingCtxRow, [number, number]>(
     `SELECT m.id, m.template_id, m.user_id, m.variables_json, m.meeting_date,
             m.previous_meeting_date, m.label, m.ai_provider, m.ai_model,
@@ -75,7 +92,32 @@ function loadMeetingCtx(meetingId: number, userId: number): MeetingCtxRow | null
      JOIN meeting_templates t ON t.id = m.template_id
      JOIN organizations o ON o.id = t.organization_id
      WHERE m.id = ? AND m.user_id = ?`,
-  ).get(meetingId, userId) ?? null;
+  ).get(meetingId, user.id) ?? null;
+}
+
+function sectionPromptOverride(userId: number, meetingId: number, sectionKey: string): string | null {
+  return db.query<SectionPromptOverrideRow, [number, number, string]>(
+    "SELECT prompt FROM section_prompt_overrides WHERE user_id = ? AND meeting_id = ? AND section_key = ?",
+  ).get(userId, meetingId, sectionKey)?.prompt ?? null;
+}
+
+function userMappedVariables(userId: number | undefined, sectionKey: string): string[] {
+  if (!userId) return [];
+  return db.query<MappingRow, [number, string]>(
+    "SELECT token FROM user_template_variable_mappings WHERE user_id = ? AND section_key = ? ORDER BY token",
+  ).all(userId, sectionKey).map((row) => row.token);
+}
+
+function userExcludedVariables(userId: number | undefined, sectionKey: string): Set<string> {
+  if (!userId) return new Set();
+  return new Set(db.query<MappingRow, [number, string]>(
+    "SELECT token FROM user_template_variable_mapping_exclusions WHERE user_id = ? AND section_key = ?",
+  ).all(userId, sectionKey).map((row) => row.token));
+}
+
+function effectiveRequiredVariables(userId: number | undefined, sectionKey: string, base: string[]): string[] {
+  const excluded = userExcludedVariables(userId, sectionKey);
+  return mergeVariables(base, userMappedVariables(userId, sectionKey)).filter((token) => !excluded.has(token));
 }
 
 function parseSourcesJson(raw: string): string[] {
@@ -87,7 +129,7 @@ function parseSourcesJson(raw: string): string[] {
   }
 }
 
-function rowToSection(row: SectionRow, variables?: Record<string, string>) {
+function rowToSection(row: SectionRow, variables?: Record<string, string>, userId?: number) {
   return {
     id: row.id,
     meeting_id: row.meeting_id,
@@ -103,9 +145,13 @@ function rowToSection(row: SectionRow, variables?: Record<string, string>) {
     status: row.status,
     mode: row.mode === "ai" ? "ai" : "template",
     required_sources: parseSourcesJson(row.required_sources_json),
-    required_variables: mergeVariables(
-      inferRequiredVariables(row.template_body_text ?? "", row.title),
-      parseSourcesJson(row.required_variables_json ?? "[]"),
+    required_variables: effectiveRequiredVariables(
+      userId,
+      row.section_key,
+      mergeVariables(
+        inferRequiredVariables(row.template_body_text ?? "", row.title),
+        parseSourcesJson(row.required_variables_json ?? "[]"),
+      ),
     ),
     last_ai_provider: row.last_ai_provider,
     last_ai_model: row.last_ai_model,
@@ -147,19 +193,19 @@ function uniqueSectionKey(meetingId: number, title: string): string {
 r.get("/meetings/:id/sections", (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   const rows = db.query<SectionRow, [number]>(
     "SELECT * FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
   ).all(id);
   const variables = variablesForMeeting(m);
-  return c.json({ sections: rows.map((row) => rowToSection(row, variables)) });
+  return c.json({ sections: rows.map((row) => rowToSection(row, variables, user.id)) });
 });
 
 r.post("/meetings/:id/sections", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   const body = await c.req.json().catch(() => ({})) as Partial<{
     title: string;
@@ -190,13 +236,13 @@ r.post("/meetings/:id/sections", async (c) => {
   );
   const row = db.query<SectionRow, [number]>("SELECT * FROM section_drafts WHERE id = ?")
     .get(Number(res.lastInsertRowid));
-  return c.json({ section: row ? rowToSection(row, variablesForMeeting(m)) : null }, 201);
+  return c.json({ section: row ? rowToSection(row, variablesForMeeting(m), user.id) : null }, 201);
 });
 
 r.patch("/meetings/:id/sections/reorder", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   const body = await c.req.json().catch(() => ({})) as Partial<{ section_keys: string[] }>;
   const keys = body.section_keys?.filter((k): k is string => typeof k === "string" && k.length > 0) ?? [];
@@ -210,14 +256,14 @@ r.patch("/meetings/:id/sections/reorder", async (c) => {
     "SELECT * FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
   ).all(id);
   const variables = variablesForMeeting(m);
-  return c.json({ sections: rows.map((row) => rowToSection(row, variables)) });
+  return c.json({ sections: rows.map((row) => rowToSection(row, variables, user.id)) });
 });
 
 r.patch("/meetings/:id/sections/:key", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const key = c.req.param("key");
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
 
   const body = await c.req.json().catch(() => ({})) as Partial<{
@@ -253,14 +299,14 @@ r.patch("/meetings/:id/sections/:key", async (c) => {
     "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
   ).get(id, key);
   if (!row) return c.json({ error: "section not found" }, 404);
-  return c.json({ section: rowToSection(row, variablesForMeeting(m)) });
+  return c.json({ section: rowToSection(row, variablesForMeeting(m), user.id) });
 });
 
 r.delete("/meetings/:id/sections/:key", (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const key = c.req.param("key");
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   db.run("DELETE FROM section_drafts WHERE meeting_id = ? AND section_key = ?", [id, key]);
   const rows = db.query<SectionRow, [number]>(
@@ -278,7 +324,7 @@ r.post("/meetings/:id/sections/:key/revert", (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const key = c.req.param("key");
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   const draft = db.query<SectionRow, [number, string]>(
     "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
@@ -296,18 +342,13 @@ r.post("/meetings/:id/sections/:key/revert", (c) => {
   const row = db.query<SectionRow, [number, string]>(
     "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
   ).get(id, key);
-  return c.json({ section: row ? rowToSection(row, variablesForMeeting(m)) : null });
+  return c.json({ section: row ? rowToSection(row, variablesForMeeting(m), user.id) : null });
 });
 
-function buildSectionPrompt(
-  m: MeetingCtxRow,
-  draft: SectionRow,
-  sourceIds?: number[],
-): { system: string; prompt: string } {
-  const id = m.id;
+function sectionForDraft(m: MeetingCtxRow, draft: SectionRow): ParsedSection {
   const parsed = JSON.parse(m.parsed_json) as ParsedTemplate;
   const templateSection = parsed.sections.find((s) => s.key === draft.section_key);
-  const section: ParsedSection = templateSection ?? {
+  return templateSection ?? {
     key: draft.section_key,
     ordinal: draft.ordinal,
     title: draft.title,
@@ -315,21 +356,51 @@ function buildSectionPrompt(
     bodyXml: "",
     placeholders: [],
   };
+}
 
-  // Pull sources scoped to this section's required source labels
+function sourceRowsForSection(
+  meetingId: number,
+  draft: SectionRow,
+  sourceIds?: number[],
+): Array<{ id: number; kind: string; label: string | null; extracted_text: string | null }> {
   const requiredLabels = parseSourcesJson(draft.required_sources_json);
   let sourceRows: Array<{ id: number; kind: string; label: string | null; extracted_text: string | null }> = [];
   if (sourceIds && sourceIds.length) {
     const placeholders = sourceIds.map(() => "?").join(",");
     sourceRows = db.query<typeof sourceRows[number], number[]>(
       `SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ? AND id IN (${placeholders})`,
-    ).all(id, ...sourceIds) as typeof sourceRows;
+    ).all(meetingId, ...sourceIds) as typeof sourceRows;
   } else if (requiredLabels.length) {
     const placeholders = requiredLabels.map(() => "?").join(",");
     sourceRows = db.query<typeof sourceRows[number], (number | string)[]>(
       `SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ? AND label IN (${placeholders})`,
-    ).all(id, ...requiredLabels) as typeof sourceRows;
+    ).all(meetingId, ...requiredLabels) as typeof sourceRows;
+  } else {
+    sourceRows = db.query<typeof sourceRows[number], [number, string]>(
+      "SELECT id, kind, label, extracted_text FROM sources WHERE meeting_id = ? AND label = ?",
+    ).all(meetingId, `__section:${draft.section_key}`) as typeof sourceRows;
   }
+  return sourceRows;
+}
+
+function promptSourcesBlock(sourceRows: Array<{ kind: string; label: string | null; extracted_text: string | null }>): string {
+  if (!sourceRows.length) return "Sources: (none provided)";
+  return `Sources:\n${sourceRows.map((s, i) => (
+    `--- source ${i + 1} [${s.kind}] ${s.label || ""} ---\n${(s.extracted_text ?? "").slice(0, 40000)}`
+  )).join("\n\n")}`;
+}
+
+function sourceLikeUserPrompt(text: string): boolean {
+  return text.length > 700 || text.split(/\r?\n/).filter((line) => line.trim()).length >= 6;
+}
+
+function buildSectionPrompt(
+  m: MeetingCtxRow,
+  draft: SectionRow,
+  sourceIds?: number[],
+): { system: string; prompt: string; sources: string } {
+  const section = sectionForDraft(m, draft);
+  const sourceRows = sourceRowsForSection(m.id, draft, sourceIds);
 
   const sectionMode: "template" | "ai" = draft.mode === "ai" ? "ai" : "template";
   const ctx: PromptContext = {
@@ -347,28 +418,72 @@ function buildSectionPrompt(
       text: (s.extracted_text ?? "").slice(0, 40000),
     })),
   };
-  return buildPrompt(ctx);
+  return { ...buildPrompt(ctx), sources: promptSourcesBlock(sourceRows) };
 }
 
 r.get("/meetings/:id/sections/:key/prompt", (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const key = c.req.param("key");
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
   const draft = db.query<SectionRow, [number, string]>(
     "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
   ).get(id, key);
   if (!draft) return c.json({ error: "section not found" }, 404);
   const { system, prompt } = buildSectionPrompt(m, draft);
-  return c.json({ system, prompt });
+  const saved_prompt = sectionPromptOverride(user.id, id, key);
+  return c.json({ system, prompt: saved_prompt ?? prompt, generated_prompt: prompt, saved_prompt });
+});
+
+r.patch("/meetings/:id/sections/:key/prompt", async (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  const key = c.req.param("key");
+  const m = loadMeetingCtx(id, user);
+  if (!m) return c.json({ error: "not found" }, 404);
+  const draft = db.query<SectionRow, [number, string]>(
+    "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
+  ).get(id, key);
+  if (!draft) return c.json({ error: "section not found" }, 404);
+  const body = await c.req.json().catch(() => ({})) as Partial<{ prompt: string }>;
+  const prompt = body.prompt?.trim();
+  if (!prompt) return c.json({ error: "prompt required" }, 400);
+  db.run(
+    `INSERT INTO section_prompt_overrides (user_id, meeting_id, section_key, prompt, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id, meeting_id, section_key)
+     DO UPDATE SET prompt = excluded.prompt, updated_at = datetime('now')`,
+    [user.id, id, key, prompt],
+  );
+  const { system, prompt: generated_prompt } = buildSectionPrompt(m, draft);
+  return c.json({ system, prompt, generated_prompt, saved_prompt: prompt });
+});
+
+r.delete("/meetings/:id/sections/:key/prompt", (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  const key = c.req.param("key");
+  const m = loadMeetingCtx(id, user);
+  if (!m) return c.json({ error: "not found" }, 404);
+  const draft = db.query<SectionRow, [number, string]>(
+    "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
+  ).get(id, key);
+  if (!draft) return c.json({ error: "section not found" }, 404);
+  db.run("DELETE FROM section_prompt_overrides WHERE user_id = ? AND meeting_id = ? AND section_key = ?", [
+    user.id,
+    id,
+    key,
+  ]);
+  const { system, prompt } = buildSectionPrompt(m, draft);
+  return c.json({ system, prompt, generated_prompt: prompt, saved_prompt: null });
 });
 
 r.post("/meetings/:id/sections/:key/generate", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
   const key = c.req.param("key");
-  const m = loadMeetingCtx(id, user.id);
+  const m = loadMeetingCtx(id, user);
   if (!m) return c.json({ error: "not found" }, 404);
 
   const body = await c.req.json().catch(() => ({})) as Partial<{
@@ -385,13 +500,19 @@ r.post("/meetings/:id/sections/:key/generate", async (c) => {
   ).get(id, key);
   if (!draft) return c.json({ error: "section not found" }, 404);
 
-  const { system, prompt: basePrompt } = buildSectionPrompt(m, draft, body.source_ids);
+  const { system, prompt: generatedPrompt, sources } = buildSectionPrompt(m, draft, body.source_ids);
+  const savedPrompt = sectionPromptOverride(user.id, id, key);
+  const basePrompt = savedPrompt
+    ? `${savedPrompt}\n\nCurrent source material for this run (authoritative):\n${sources}\n\nUse the current source material above when updating the section.`
+    : generatedPrompt;
   const override = body.prompt_override?.trim();
   const userInstruction = body.user_prompt?.trim();
   const prompt = override
-    ? override
+    ? `${override}\n\nCurrent source material for this run (authoritative):\n${sources}\n\nUse the current source material above when updating the section.`
     : userInstruction
-      ? `${basePrompt}\n\nAdditional instruction:\n${userInstruction}`
+      ? sourceLikeUserPrompt(userInstruction)
+        ? `${basePrompt}\n\nAdditional source material pasted by the user:\n${userInstruction}\n\nTreat the pasted material as intentionally selected evidence for this section run. Use the uploaded sources and the pasted source material above to update the section; do not leave the section unchanged merely because the material is free-form text or organised by month/project.`
+        : `${basePrompt}\n\nAdditional instruction:\n${userInstruction}`
       : basePrompt;
 
   const started = Date.now();
@@ -415,7 +536,7 @@ r.post("/meetings/:id/sections/:key/generate", async (c) => {
       "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
     ).get(id, key);
     return c.json({
-      section: row ? rowToSection(row, variablesForMeeting(m)) : null,
+      section: row ? rowToSection(row, variablesForMeeting(m), user.id) : null,
       ai: { provider: result.provider, model: result.model, duration_ms: duration },
     });
   } catch (err) {

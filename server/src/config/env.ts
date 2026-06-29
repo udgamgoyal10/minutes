@@ -30,6 +30,7 @@ export const env = {
   refreshTtl: num("REFRESH_TOKEN_TTL_SECONDS", 60 * 60 * 24 * 7),
   adminEmail: opt("ADMIN_EMAIL", "admin@example.com"),
   adminPassword: opt("ADMIN_PASSWORD", "changeme"),
+  googleClientId: opt("GOOGLE_CLIENT_ID"),
 
   sqlitePath: opt("SQLITE_PATH", "./data/minutes.db"),
   uploadDir: opt("UPLOAD_DIR", "./data/uploads"),
@@ -38,6 +39,8 @@ export const env = {
   ollama: {
     baseUrl: opt("OLLAMA_BASE_URL", "http://10.3.8.14:11434"),
     defaultModel: opt("OLLAMA_DEFAULT_MODEL", "llama3.1:8b"),
+    timeoutMs: num("OLLAMA_TIMEOUT_MS", 15 * 60 * 1000),
+    keepAlive: opt("OLLAMA_KEEP_ALIVE", "30m"),
   },
   anthropic: {
     apiKey: opt("ANTHROPIC_API_KEY"),

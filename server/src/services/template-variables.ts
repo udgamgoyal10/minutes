@@ -22,9 +22,30 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
   "Caretaker of Livestock",
   "Caretaker of Agriculture",
   "Caretaker of Gardens",
+  "Administrator of JKP Education",
   "Date of Janmashtami",
   "Medical Superintendent of JKC Mangarh",
   "Financial Year (e.g. 19-20)",
+  "Managing Trustee Gender",
+  "Managing Trustee Subject Pronoun",
+  "Managing Trustee Object Pronoun",
+  "Managing Trustee Possessive Pronoun",
+  "Secretary Gender",
+  "Secretary Subject Pronoun",
+  "Secretary Object Pronoun",
+  "Secretary Possessive Pronoun",
+  "Treasurer Gender",
+  "Treasurer Subject Pronoun",
+  "Treasurer Object Pronoun",
+  "Treasurer Possessive Pronoun",
+  "Income Tax Representative Gender",
+  "Income Tax Representative Subject Pronoun",
+  "Income Tax Representative Object Pronoun",
+  "Income Tax Representative Possessive Pronoun",
+  "Medical Superintendent Gender",
+  "Medical Superintendent Subject Pronoun",
+  "Medical Superintendent Object Pronoun",
+  "Medical Superintendent Possessive Pronoun",
 ] as const;
 
 // Explicit per-section variable additions keyed by normalized section title.
@@ -33,6 +54,8 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
 const SECTION_VARIABLE_MAP: Record<string, string[]> = {
   "maintenance-of-gardens": ["caretaker-of-gardens"],
   "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-other-gardens": ["caretaker-of-gardens"],
+  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": ["caretaker-of-gardens"],
+  "free-distribution-program-for-underprivileged-school-children-and-poor-people": ["administrator-of-jkp-education"],
 };
 
 // Tokens whose value is a single date the user picks; rendered as a formatted
@@ -100,8 +123,8 @@ export function canonicalPlaceholder(raw: string): Placeholder | null {
   const trimmed = raw.trim();
   if (!trimmed || trimmed.length < 2) return null;
   if (/^[/!?]/.test(trimmed)) return null;
-  if (/^[A-Z][A-Za-z0-9]*\s*[/=]/.test(trimmed)) return null;
   const token = canonicalToken(trimmed);
+  if (/^[A-Z][A-Za-z0-9]*\s*[/=]/.test(trimmed) && !token.endsWith("-pronoun")) return null;
   if (HIDDEN_TEMPLATE_VARIABLES.has(token)) return null;
   return { token, raw: canonicalRaw(trimmed) };
 }
@@ -110,12 +133,17 @@ export function canonicalToken(raw: string): string {
   const token = slugifyVariable(raw);
   if (token === "trustee-1-aka-managing-trustee") return TRUSTEE_1_TOKEN;
   if (token === "managing-trustee") return TRUSTEE_1_TOKEN;
+  if (token === "he-she" || token === "she-he") return "managing-trustee-subject-pronoun";
+  if (token === "him-her" || token === "her-him") return "managing-trustee-object-pronoun";
+  if (token === "his-her" || token === "her-his") return "managing-trustee-possessive-pronoun";
   if (token === "day-of-month") return "day";
   if (token === "year-of-meeting") return "year";
   // "Approval of Annual Accounts" templates reference the adoption year using a
   // different phrasing; unify it onto the adoption-of-annual-accounts year so it
   // is filled from the same setup date.
   if (token === "year-of-adoption-of-annual-accounts") return "adoption-of-annual-accounts-year";
+  if (token === "administrator-of-jagadguru-kripalu-parishat-education-in-kunda") return "administrator-of-jkp-education";
+  if (token === "administrator-of-jkp-education-in-kunda") return "administrator-of-jkp-education";
   // Any "Financial Year (e.g. …)" phrasing collapses to a single variable.
   if (token.startsWith("financial-year")) return "financial-year";
   return token;
@@ -207,6 +235,15 @@ export function inferRequiredVariables(bodyText = "", title = ""): string[] {
     const mapped = DATE_ALIAS_TO_VAR[tok] ?? tok;
     if (KNOWN_SETUP_TOKENS.has(mapped)) tokens.add(mapped);
   }
+  for (const role of ["managing-trustee", "secretary", "treasurer", "income-tax-representative", "medical-superintendent"]) {
+    if (
+      tokens.has(`${role}-subject-pronoun`) ||
+      tokens.has(`${role}-object-pronoun`) ||
+      tokens.has(`${role}-possessive-pronoun`)
+    ) {
+      tokens.add(`${role}-gender`);
+    }
+  }
   const key = normalizeSectionTitleForMap(title);
   for (const extra of SECTION_VARIABLE_MAP[key] ?? []) tokens.add(extra);
   return [...tokens];
@@ -257,7 +294,13 @@ export function buildTemplateVariables(args: {
       out[date.yearToken] = parts.year;
     }
   }
-  // Format simple-date tokens (single formatted date string).
+  for (const role of ["managing-trustee", "secretary", "treasurer", "income-tax-representative", "medical-superintendent"]) {
+    const pronouns = pronounsForGender(out[`${role}-gender`]);
+    if (!pronouns) continue;
+    out[`${role}-subject-pronoun`] ||= pronouns.subject;
+    out[`${role}-object-pronoun`] ||= pronouns.object;
+    out[`${role}-possessive-pronoun`] ||= pronouns.possessive;
+  }
   for (const tok of SIMPLE_DATE_TOKENS) {
     const formatted = formatDate(out[tok]);
     if (formatted) out[tok] = formatted;
@@ -270,6 +313,17 @@ export function fillTemplateText(text: string, variables: Record<string, string>
     const value = variables[canonicalToken(raw)];
     return value != null && value !== "" ? value : full;
   });
+}
+
+function pronounsForGender(value?: string | null): { subject: string; object: string; possessive: string } | null {
+  const v = (value ?? "").trim().toLowerCase();
+  if (["female", "f", "woman", "lady", "she", "her"].includes(v)) {
+    return { subject: "she", object: "her", possessive: "her" };
+  }
+  if (["male", "m", "man", "gentleman", "he", "him", "his"].includes(v)) {
+    return { subject: "he", object: "him", possessive: "his" };
+  }
+  return null;
 }
 
 function formatDate(value?: string | null): string {
