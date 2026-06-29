@@ -95,10 +95,27 @@ function loadMeetingCtx(meetingId: number, user: { id: number; role: string }): 
   ).get(meetingId, user.id) ?? null;
 }
 
+function stripPromptSourceMaterial(prompt: string): string {
+  return prompt
+    .replace(/\n*Current source material for this run \(authoritative\):[\s\S]*?(?:\n\nUse the current source material above when updating the section\.?|$)/g, "")
+    .replace(/\n*Sources:\n--- source [\s\S]*?(?=\nPlaceholders to fill \(leave as-is if no data\):|\n\nReplace each <placeholder>|\n\nReturn the rewritten section body only|$)/g, "\n")
+    .replace(/\n*Sources: \(none provided\)\n*/g, "\n")
+    .trim();
+}
+
 function sectionPromptOverride(userId: number, meetingId: number, sectionKey: string): string | null {
-  return db.query<SectionPromptOverrideRow, [number, number, string]>(
+  const templatePrompt = db.query<SectionPromptOverrideRow, [number, string]>(
+    "SELECT prompt FROM user_section_prompt_templates WHERE user_id = ? AND section_key = ?",
+  ).get(userId, sectionKey)?.prompt;
+  if (templatePrompt) return stripPromptSourceMaterial(templatePrompt);
+  const meetingPrompt = db.query<SectionPromptOverrideRow, [number, number, string]>(
     "SELECT prompt FROM section_prompt_overrides WHERE user_id = ? AND meeting_id = ? AND section_key = ?",
-  ).get(userId, meetingId, sectionKey)?.prompt ?? null;
+  ).get(userId, meetingId, sectionKey)?.prompt;
+  return meetingPrompt ? stripPromptSourceMaterial(meetingPrompt) : null;
+}
+
+function promptWithCurrentSources(prompt: string, sources: string): string {
+  return `${stripPromptSourceMaterial(prompt)}\n\nCurrent source material for this run (authoritative):\n${sources}\n\nUse the current source material above when updating the section.`;
 }
 
 function userMappedVariables(userId: number | undefined, sectionKey: string): string[] {
@@ -418,7 +435,7 @@ function buildSectionPrompt(
       text: (s.extracted_text ?? "").slice(0, 40000),
     })),
   };
-  return { ...buildPrompt(ctx), sources: promptSourcesBlock(sourceRows) };
+  return { ...buildPrompt(ctx, { includeSources: false }), sources: promptSourcesBlock(sourceRows) };
 }
 
 r.get("/meetings/:id/sections/:key/prompt", (c) => {
@@ -449,15 +466,17 @@ r.patch("/meetings/:id/sections/:key/prompt", async (c) => {
   const body = await c.req.json().catch(() => ({})) as Partial<{ prompt: string }>;
   const prompt = body.prompt?.trim();
   if (!prompt) return c.json({ error: "prompt required" }, 400);
+  const savedPrompt = stripPromptSourceMaterial(prompt);
   db.run(
-    `INSERT INTO section_prompt_overrides (user_id, meeting_id, section_key, prompt, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(user_id, meeting_id, section_key)
+    `INSERT INTO user_section_prompt_templates (user_id, section_key, prompt, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id, section_key)
      DO UPDATE SET prompt = excluded.prompt, updated_at = datetime('now')`,
-    [user.id, id, key, prompt],
+    [user.id, key, savedPrompt],
   );
+  db.run("DELETE FROM section_prompt_overrides WHERE user_id = ? AND meeting_id = ? AND section_key = ?", [user.id, id, key]);
   const { system, prompt: generated_prompt } = buildSectionPrompt(m, draft);
-  return c.json({ system, prompt, generated_prompt, saved_prompt: prompt });
+  return c.json({ system, prompt: savedPrompt, generated_prompt, saved_prompt: savedPrompt });
 });
 
 r.delete("/meetings/:id/sections/:key/prompt", (c) => {
@@ -470,6 +489,7 @@ r.delete("/meetings/:id/sections/:key/prompt", (c) => {
     "SELECT * FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
   ).get(id, key);
   if (!draft) return c.json({ error: "section not found" }, 404);
+  db.run("DELETE FROM user_section_prompt_templates WHERE user_id = ? AND section_key = ?", [user.id, key]);
   db.run("DELETE FROM section_prompt_overrides WHERE user_id = ? AND meeting_id = ? AND section_key = ?", [
     user.id,
     id,
@@ -502,13 +522,11 @@ r.post("/meetings/:id/sections/:key/generate", async (c) => {
 
   const { system, prompt: generatedPrompt, sources } = buildSectionPrompt(m, draft, body.source_ids);
   const savedPrompt = sectionPromptOverride(user.id, id, key);
-  const basePrompt = savedPrompt
-    ? `${savedPrompt}\n\nCurrent source material for this run (authoritative):\n${sources}\n\nUse the current source material above when updating the section.`
-    : generatedPrompt;
+  const basePrompt = promptWithCurrentSources(savedPrompt ?? generatedPrompt, sources);
   const override = body.prompt_override?.trim();
   const userInstruction = body.user_prompt?.trim();
   const prompt = override
-    ? `${override}\n\nCurrent source material for this run (authoritative):\n${sources}\n\nUse the current source material above when updating the section.`
+    ? promptWithCurrentSources(override, sources)
     : userInstruction
       ? sourceLikeUserPrompt(userInstruction)
         ? `${basePrompt}\n\nAdditional source material pasted by the user:\n${userInstruction}\n\nTreat the pasted material as intentionally selected evidence for this section run. Use the uploaded sources and the pasted source material above to update the section; do not leave the section unchanged merely because the material is free-form text or organised by month/project.`

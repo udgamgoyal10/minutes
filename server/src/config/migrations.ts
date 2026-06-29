@@ -1104,6 +1104,43 @@ const migrations: Migration[] = [
       db.exec("ALTER TABLE template_variable_values ADD COLUMN gender TEXT;");
     },
   },
+  {
+    id: 27,
+    name: "user_section_prompt_templates",
+    up: () => {
+      db.exec(`
+        CREATE TABLE user_section_prompt_templates (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          section_key TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY(user_id, section_key)
+        );
+      `);
+      const strip = (prompt: string) => prompt
+        .replace(/\n*Current source material for this run \(authoritative\):[\s\S]*?(?:\n\nUse the current source material above when updating the section\.?|$)/g, "")
+        .replace(/\n*Sources:\n--- source [\s\S]*?(?=\nPlaceholders to fill \(leave as-is if no data\):|\n\nReplace each <placeholder>|\n\nReturn the rewritten section body only|$)/g, "\n")
+        .replace(/\n*Sources: \(none provided\)\n*/g, "\n")
+        .trim();
+      const rows = db.query<{ user_id: number; section_key: string; prompt: string }, []>(
+        "SELECT user_id, section_key, prompt FROM section_prompt_overrides ORDER BY updated_at ASC, created_at ASC",
+      ).all();
+      const upsert = db.prepare(
+        `INSERT INTO user_section_prompt_templates (user_id, section_key, prompt, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(user_id, section_key)
+         DO UPDATE SET prompt = excluded.prompt, updated_at = datetime('now')`,
+      );
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const prompt = strip(row.prompt);
+          if (prompt) upsert.run(row.user_id, row.section_key, prompt);
+        }
+      });
+      tx();
+    },
+  },
 
 ];
 

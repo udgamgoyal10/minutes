@@ -410,7 +410,7 @@ export function SectionPage() {
               >
                 <span className="flex items-center gap-1">
                   {showPrompt ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                  {promptDirty ? "Edited prompt (sent to AI)" : "Default prompt for this section"}
+                  {promptDirty ? "Edited prompt (sent to AI)" : "Reusable prompt for this section template"}
                 </span>
                 {promptDirty && (
                   <span className="text-[10px] uppercase tracking-wide bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
@@ -421,8 +421,8 @@ export function SectionPage() {
               {showPrompt && (
                 <div className="px-3 pb-3 space-y-2">
                   <p className="text-[11px] text-slate-500">
-                    This is the default prompt sent to the AI for this section. Save it to reuse it whenever this section is generated,
-                    or reset to the system default. By default the AI only changes the
+                    This prompt is saved for this section template and your user account, so future meetings using this section will reuse it.
+                    Source-file text is added separately only for the current AI run. By default the AI only changes the
                     <span className="font-mono"> &lt;…&gt; </span> placeholder locations.
                   </p>
                   <textarea
@@ -445,7 +445,7 @@ export function SectionPage() {
                       disabled={savePrompt.isPending || !promptText.trim()}
                       className="text-xs bg-brand-600 hover:bg-brand-700 text-white rounded-md px-2.5 py-1.5 disabled:opacity-50"
                     >
-                      {savePrompt.isPending ? "Saving…" : "Save as default prompt"}
+                      {savePrompt.isPending ? "Saving…" : "Save for this section template"}
                     </button>
                     <button
                       type="button"
@@ -457,11 +457,11 @@ export function SectionPage() {
                       disabled={resetPrompt.isPending}
                       className="text-xs text-brand-700 hover:underline flex items-center gap-1 disabled:opacity-50"
                     >
-                      <RotateCcw className="size-3.5" /> {resetPrompt.isPending ? "Resetting…" : "Reset to system default"}
+                      <RotateCcw className="size-3.5" /> {resetPrompt.isPending ? "Resetting…" : "Reset to generated default"}
                     </button>
                     {promptQ.data?.saved_prompt && (
                       <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
-                        saved default
+                        saved template prompt
                       </span>
                     )}
                   </div>

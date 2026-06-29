@@ -86,7 +86,8 @@ function expenseGuidance(_ctx: PromptContext, kind: "agricultural" | "livestock"
   );
 }
 
-function sourcesBlock(ctx: PromptContext): string {
+function sourcesBlock(ctx: PromptContext, includeSources: boolean): string {
+  if (!includeSources) return "";
   if (!ctx.sources.length) return "Sources: (none provided)\n\n";
   const parts = ctx.sources.map(
     (s, i) => `--- source ${i + 1} [${s.kind}] ${s.label || ""} ---\n${s.text}`,
@@ -114,8 +115,9 @@ function guidanceBlock(ctx: PromptContext): string {
   return fn ? `\n${fn(ctx)}\n` : "";
 }
 
-export function buildPrompt(ctx: PromptContext): { system: string; prompt: string } {
+export function buildPrompt(ctx: PromptContext, options: { includeSources?: boolean } = {}): { system: string; prompt: string } {
   const templateBody = ctx.templateBodyText || ctx.section.bodyText;
+  const includeSources = options.includeSources ?? true;
   const hasPlaceholders = /<[^<>\n]{2,200}>/.test(templateBody);
   const header =
     `Meeting: ${ctx.meetingTitle}\n` +
@@ -134,7 +136,7 @@ export function buildPrompt(ctx: PromptContext): { system: string; prompt: strin
       "Template wording for this section (KEEP every word and line break exactly, only replace the <placeholder> tokens):\n" +
       `"""\n${templateBody}\n"""\n\n` +
       guidanceBlock(ctx) +
-      sourcesBlock(ctx) +
+      sourcesBlock(ctx, includeSources) +
       placeholderBlock(ctx) +
       "\n\nReplace each <placeholder> with concise AI-summarized content drawn ONLY from the sources within the date window. " +
       "If a placeholder cannot be filled from the sources, leave the <placeholder> token intact. " +
@@ -150,7 +152,7 @@ export function buildPrompt(ctx: PromptContext): { system: string; prompt: strin
     "Template boilerplate for this section (use as reference; if blank, draft from scratch using the additional instruction and sources):\n" +
     `"""\n${templateBody || "(blank custom section)"}\n"""\n\n` +
     guidanceBlock(ctx) +
-    sourcesBlock(ctx) +
+    sourcesBlock(ctx, includeSources) +
     placeholderBlock(ctx) +
     "\n\nReturn the rewritten section body only (no heading, no preamble).";
   return { system: SYSTEM_BASE, prompt: generic };
