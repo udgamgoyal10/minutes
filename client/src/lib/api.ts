@@ -52,6 +52,7 @@ export type Meeting = {
   label: string;
   meeting_date: string | null;
   previous_meeting_date: string | null;
+  is_annual: boolean;
   variables: Record<string, string>;
   ai_provider: string | null;
   ai_model: string | null;
@@ -261,6 +262,7 @@ export function useUpdateMeeting(id: number) {
       label: string;
       meeting_date: string;
       previous_meeting_date: string;
+      is_annual: boolean;
       variables: Record<string, string>;
       ai_provider: string;
       ai_model: string;

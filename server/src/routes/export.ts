@@ -14,23 +14,37 @@ type Ctx = {
   variables_json: string;
   meeting_date: string | null;
   previous_meeting_date: string | null;
+  is_annual: number;
   label: string;
   docx_path: string;
   parsed_json: string;
   created_at: string;
 };
 
+// When a meeting is flagged as annual (adoption of accounts), the introduction
+// opens with "Minutes of the Annual Meeting …" instead of "Minutes of the Meeting …".
+function applyAnnualMeetingWording(sections: ApprovedSection[]): ApprovedSection[] {
+  return sections.map((section) => {
+    if (section.key !== "introduction") return section;
+    if (/minutes of the annual meeting/i.test(section.content_md)) return section;
+    return {
+      ...section,
+      content_md: section.content_md.replace(/\bMinutes of the Meeting\b/i, "Minutes of the Annual Meeting"),
+    };
+  });
+}
+
 function loadCtx(meetingId: number, user: { id: number; role: string }): Ctx | null {
   if (isAdminRole(user.role)) {
     return db.query<Ctx, [number]>(
-      `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.label, m.created_at, t.docx_path, t.parsed_json
+      `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
        FROM meetings m
        JOIN meeting_templates t ON t.id = m.template_id
        WHERE m.id = ?`,
     ).get(meetingId) ?? null;
   }
   return db.query<Ctx, [number, number]>(
-    `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.label, m.created_at, t.docx_path, t.parsed_json
+    `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
      FROM meetings m
      JOIN meeting_templates t ON t.id = m.template_id
      WHERE m.id = ? AND m.user_id = ?`,
@@ -41,13 +55,14 @@ function loadSections(meetingId: number, ctx: Ctx, filled: boolean): ApprovedSec
   const rows = db.query<ApprovedSection, [number]>(
     "SELECT section_key as key, ordinal, title, content_md, template_body_text FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
   ).all(meetingId);
-  if (!filled) return rows;
+  const annualized = ctx.is_annual ? applyAnnualMeetingWording(rows) : rows;
+  if (!filled) return annualized;
   const variables = buildTemplateVariables({
     variables: JSON.parse(ctx.variables_json) as Record<string, string>,
     meetingDate: ctx.meeting_date,
     previousMeetingDate: ctx.previous_meeting_date,
   });
-  return rows.map((row) => ({
+  return annualized.map((row) => ({
     ...row,
     title: fillTemplateText(row.title, variables),
     content_md: fillTemplateText(row.content_md, variables),

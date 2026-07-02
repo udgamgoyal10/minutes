@@ -24,6 +24,7 @@ type MeetingRow = {
   label: string;
   meeting_date: string | null;
   previous_meeting_date: string | null;
+  is_annual: number;
   variables_json: string;
   ai_provider: string | null;
   ai_model: string | null;
@@ -748,6 +749,7 @@ r.patch("/meetings/:id", async (c) => {
     label: string;
     meeting_date: string;
     previous_meeting_date: string;
+    is_annual: boolean;
     variables: Record<string, string>;
     ai_provider: string;
     ai_model: string;
@@ -761,6 +763,7 @@ r.patch("/meetings/:id", async (c) => {
       label = COALESCE(?, label),
       meeting_date = COALESCE(?, meeting_date),
       previous_meeting_date = COALESCE(?, previous_meeting_date),
+      is_annual = COALESCE(?, is_annual),
       variables_json = ?,
       ai_provider = COALESCE(?, ai_provider),
       ai_model = COALESCE(?, ai_model),
@@ -771,6 +774,7 @@ r.patch("/meetings/:id", async (c) => {
       body.label ?? null,
       body.meeting_date ?? null,
       body.previous_meeting_date ?? null,
+      body.is_annual == null ? null : body.is_annual ? 1 : 0,
       vars,
       body.ai_provider ?? null,
       body.ai_model ?? null,
@@ -823,6 +827,7 @@ function rowToMeeting(row: MeetingRow) {
     label: row.label,
     meeting_date: row.meeting_date,
     previous_meeting_date: row.previous_meeting_date,
+    is_annual: !!row.is_annual,
     variables: JSON.parse(row.variables_json) as Record<string, string>,
     ai_provider: row.ai_provider,
     ai_model: row.ai_model,

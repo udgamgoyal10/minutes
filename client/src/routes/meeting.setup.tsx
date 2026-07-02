@@ -87,6 +87,7 @@ export function SetupPage() {
   const [vars, setVars] = useState<Record<string, string>>({});
   const [meetingDate, setMeetingDate] = useState("");
   const [previousDate, setPreviousDate] = useState("");
+  const [isAnnual, setIsAnnual] = useState(false);
   const [provider, setProvider] = useState<ProviderInfo["id"] | "">("");
   const [model, setModel] = useState("");
 
@@ -95,6 +96,7 @@ export function SetupPage() {
     setVars(meeting.variables ?? {});
     setMeetingDate(meeting.meeting_date ?? "");
     setPreviousDate(meeting.previous_meeting_date ?? "");
+    setIsAnnual(!!meeting.is_annual);
     if (meeting.ai_provider) setProvider(meeting.ai_provider as ProviderInfo["id"]);
     if (meeting.ai_model) setModel(meeting.ai_model);
   }, [meeting]);
@@ -174,6 +176,21 @@ export function SetupPage() {
         <DateField label="Previous meeting date" value={previousDate} onChange={setPreviousDate} />
         <DateField label="This meeting date" value={meetingDate} onChange={setMeetingDate} />
       </div>
+
+      <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-slate-200 bg-white p-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={isAnnual}
+          onChange={(e) => setIsAnnual(e.target.checked)}
+          className="mt-0.5 size-4"
+        />
+        <span className="text-sm">
+          <span className="font-medium text-slate-800">Annual meeting (adoption of accounts)</span>
+          <span className="block text-slate-500">
+            When on, the introduction opens with “Minutes of the Annual Meeting of the Board of Trustees …”.
+          </span>
+        </span>
+      </label>
 
       <div className="mt-8 mb-3 flex items-center justify-between gap-3">
         <h2 className="text-lg font-medium">Template variables</h2>
@@ -317,6 +334,7 @@ export function SetupPage() {
               variables: vars,
               meeting_date: meetingDate || undefined,
               previous_meeting_date: previousDate || undefined,
+              is_annual: isAnnual,
               ai_provider: provider || undefined,
               ai_model: model || undefined,
             });

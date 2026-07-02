@@ -80,20 +80,120 @@ function rebuildBody(xml: string, rendered: string): string {
   return xml.replace(m[0], `${bodyOpen}${rendered}${sectPr}${bodyClose}`);
 }
 
+// 12pt Calibri for the whole document (sz is in half-points).
+const FONT = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>';
+// Line spacing in 240ths (auto): 1.25 = 300, 1.5 = 360.
+const LINE_125 = "300";
+const LINE_15 = "360";
+
+// Introduction sub-headers (compared case-insensitively, trailing colon ignored).
+// These render bold + underlined like section headers.
+const INTRO_SUBHEADERS = new Set([
+  "trustees present",
+  "office bearers present",
+  "special invitees",
+  "members present",
+  "in attendance",
+  "also present",
+  "chairperson",
+  "quorum",
+  "leave of absence",
+  "notice of the meeting",
+  "approval of proceedings",
+]);
+// Sub-header blocks within the introduction that use 1.5 line spacing.
+const INTRO_ONE_AND_HALF_BLOCKS = new Set(["trustees present", "office bearers present"]);
+
 function sectionsToWordXml(sections: ApprovedSection[]): string {
   const sorted = [...sections].sort((a, b) => a.ordinal - b.ordinal);
-  const hasIntro = sorted.some((section) => section.key === "introduction");
+  let counter = 0;
   return sorted
     .map((section) => {
-      const title = section.key === "introduction" ? section.title : `${hasIntro ? section.ordinal - 1 : section.ordinal}. ${section.title}`;
-      return `${headingToWordXml(title)}${markdownToWordXml(section.content_md)}`;
+      if (section.key === "introduction") {
+        // No "Introduction" heading; the body carries its own sub-headers.
+        return introToWordXml(section.content_md);
+      }
+      const unnumbered = section.key === "vote-of-thanks" || /\bvote of thanks\b/i.test(section.title);
+      const heading = unnumbered ? section.title : `${(counter += 1)}. ${section.title}`;
+      return `${headingToWordXml(heading)}${markdownToWordXml(section.content_md)}`;
     })
     .join("");
 }
 
+// Section headers: bold + underlined, 12pt, no space beneath, number offset 0.5".
 function headingToWordXml(title: string): string {
-  const baseFont = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="28"/><w:szCs w:val="28"/>';
-  return `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr>${baseFont}<w:b/></w:rPr><w:t xml:space="preserve">${xmlEscape(title)}</w:t></w:r></w:p>`;
+  return `<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:before="0" w:after="0" w:line="${LINE_125}" w:lineRule="auto"/><w:ind w:left="720"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr>${FONT}<w:b/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">${xmlEscape(title)}</w:t></w:r></w:p>`;
+}
+
+function normalizeHeaderText(s: string): string {
+  return s.trim().replace(/[:：]\s*$/, "").toLowerCase();
+}
+
+function isFullyBold(line: string): boolean {
+  return /^\*\*[\s\S]+\*\*$/.test(line) && !line.slice(2, -2).includes("**");
+}
+
+function stripSurroundingBold(line: string): string {
+  return isFullyBold(line) ? line.slice(2, -2) : line;
+}
+
+function bodyParaXml(text: string, line: string, opts: { bold?: boolean; jc?: string } = {}): string {
+  const jc = opts.jc ?? "both";
+  return `<w:p><w:pPr><w:spacing w:after="120" w:line="${line}" w:lineRule="auto"/><w:jc w:val="${jc}"/></w:pPr>${runsFromInline(text, opts.bold)}</w:p>`;
+}
+
+function bulletParaXml(text: string, line: string): string {
+  // Bullets sit at the left margin (single small indent) and read left-aligned.
+  return `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:ind w:left="360" w:hanging="360"/><w:spacing w:after="120" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runsFromInline(text)}</w:p>`;
+}
+
+function subHeaderParaXml(text: string, line: string): string {
+  return `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr>${FONT}<w:b/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
+}
+
+// Renders the introduction with its special formatting: bold opening paragraph,
+// bold + underlined sub-headers, and 1.5 line spacing for the Trustees Present /
+// Office Bearers Present blocks (1.25 elsewhere).
+function introToWordXml(md: string): string {
+  const lines = md.split(/\r?\n/);
+  const paras: string[] = [];
+  let bullets: string[] = [];
+  let firstParagraphDone = false;
+  let inOneAndHalfBlock = false;
+
+  const currentLine = () => (inOneAndHalfBlock ? LINE_15 : LINE_125);
+  const flushBullets = () => {
+    for (const b of bullets) paras.push(bulletParaXml(b, currentLine()));
+    bullets = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushBullets();
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      bullets.push(line.replace(/^[-*]\s+/, ""));
+      continue;
+    }
+    flushBullets();
+    const norm = normalizeHeaderText(line);
+    if (INTRO_SUBHEADERS.has(norm) || isFullyBold(line)) {
+      inOneAndHalfBlock = INTRO_ONE_AND_HALF_BLOCKS.has(norm);
+      paras.push(subHeaderParaXml(stripSurroundingBold(line), currentLine()));
+      continue;
+    }
+    if (!firstParagraphDone) {
+      // Opening "Minutes of the (Annual) Meeting …" paragraph is bold.
+      firstParagraphDone = true;
+      paras.push(bodyParaXml(line, LINE_125, { bold: true }));
+      continue;
+    }
+    paras.push(bodyParaXml(line, currentLine()));
+  }
+  flushBullets();
+  return paras.join("");
 }
 
 function pageBreakXml(): string {
@@ -147,11 +247,7 @@ function markdownToWordXml(md: string): string {
 
   const flushBullets = () => {
     if (!bullets.length) return;
-    for (const b of bullets) {
-      paras.push(
-        `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>${runsFromInline(b)}</w:p>`,
-      );
-    }
+    for (const b of bullets) paras.push(bulletParaXml(b, LINE_125));
     bullets = [];
   };
 
@@ -165,14 +261,16 @@ function markdownToWordXml(md: string): string {
       bullets.push(line.replace(/^[-*]\s+/, ""));
     } else {
       flushBullets();
-      paras.push(`<w:p>${runsFromInline(line)}</w:p>`);
+      paras.push(bodyParaXml(line, LINE_125));
     }
   }
   flushBullets();
   return paras.join("");
 }
 
-function runsFromInline(text: string): string {
+const RESOLVED_FURTHER_RE = /resolved further that/gi;
+
+function runsFromInline(text: string, forceBold = false): string {
   // very small inline parser for **bold** and *italic*
   type Run = { text: string; bold: boolean; italic: boolean };
   const runs: Run[] = [];
@@ -182,7 +280,7 @@ function runsFromInline(text: string): string {
   let buf = "";
   const push = () => {
     if (!buf) return;
-    runs.push({ text: buf, bold, italic });
+    runs.push({ text: buf, bold: bold || forceBold, italic });
     buf = "";
   };
   while (i < text.length) {
@@ -202,10 +300,29 @@ function runsFromInline(text: string): string {
     i += 1;
   }
   push();
-  const baseFont = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>';
-  return runs
+
+  // "resolved further that" is always bold, wherever it appears.
+  const expanded: Run[] = [];
+  for (const run of runs) {
+    RESOLVED_FURTHER_RE.lastIndex = 0;
+    if (run.bold || !RESOLVED_FURTHER_RE.test(run.text)) {
+      expanded.push(run);
+      continue;
+    }
+    RESOLVED_FURTHER_RE.lastIndex = 0;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = RESOLVED_FURTHER_RE.exec(run.text))) {
+      if (m.index > last) expanded.push({ ...run, text: run.text.slice(last, m.index) });
+      expanded.push({ ...run, text: m[0], bold: true });
+      last = m.index + m[0].length;
+    }
+    if (last < run.text.length) expanded.push({ ...run, text: run.text.slice(last) });
+  }
+
+  return expanded
     .map((r) => {
-      const rpr = `<w:rPr>${baseFont}${r.bold ? "<w:b/>" : ""}${r.italic ? "<w:i/>" : ""}</w:rPr>`;
+      const rpr = `<w:rPr>${FONT}${r.bold ? "<w:b/>" : ""}${r.italic ? "<w:i/>" : ""}</w:rPr>`;
       return `<w:r>${rpr}<w:t xml:space="preserve">${xmlEscape(r.text)}</w:t></w:r>`;
     })
     .join("");

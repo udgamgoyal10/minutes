@@ -1141,6 +1141,13 @@ const migrations: Migration[] = [
       tx();
     },
   },
+  {
+    id: 28,
+    name: "meeting_is_annual",
+    up: () => {
+      db.exec("ALTER TABLE meetings ADD COLUMN is_annual INTEGER NOT NULL DEFAULT 0;");
+    },
+  },
 
 ];
 
