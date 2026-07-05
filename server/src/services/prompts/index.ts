@@ -23,8 +23,8 @@ export const SYSTEM_BASE =
   "If a placeholder cannot be filled from the provided sources, leave the placeholder text (e.g. <Trustee 1>) intact " +
   "and continue. Do not include monetary amounts unless they are explicitly present in the sources. " +
   "If the section is blank or the user requests a new resolution, draft suitable meeting-minutes text from scratch using only the instruction, template style, variables, and sources available. " +
-  "Output must be Word-compatible plain prose. Use ONLY this minimal markdown subset: paragraphs separated by blank lines, bullet items starting with '- ', **bold** and *italic* inline emphasis. " +
-  "Do NOT use markdown headings (#, ##), numbered lists (1.), tables, blockquotes (>), code fences (```), inline code backticks, or horizontal rules. " +
+  "Output must be Word-compatible plain prose. Use ONLY this minimal markdown subset: paragraphs separated by blank lines, bullet items starting with '- ', **bold** and *italic* inline emphasis, and GitHub-flavoured markdown tables only when the user/template explicitly requests a table or source tabular data must be preserved. " +
+  "When using a markdown table, include a header row and separator row and keep source row/column meaning intact. Do NOT use markdown headings (#, ##), numbered lists (1.), blockquotes (>), code fences (```), inline code backticks, or horizontal rules. " +
   "Write resolutions as plain paragraphs in the form: RESOLVED THAT \u2026 (no italics, no quotes around the whole resolution).";
 
 const STYLE_GUIDE =

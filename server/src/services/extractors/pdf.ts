@@ -14,14 +14,32 @@ import { env } from "../../config/env.ts";
 const MIN_TEXT_LEN = 40;
 
 export async function extractPdf(path: string): Promise<string> {
+  const layoutText = await extractPdfTextLayout(path).catch(() => "");
+  if (layoutText.length >= MIN_TEXT_LEN) return layoutText;
   const layerText = await extractPdfTextLayer(path).catch(() => "");
   if (layerText.length >= MIN_TEXT_LEN) return layerText;
   return await extractPdfViaOcr(path);
 }
 
+async function extractPdfTextLayout(path: string): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const proc = spawn("pdftotext", ["-layout", "-nopgbrk", path, "-"]);
+    const chunks: Uint8Array[] = [];
+    const errors: Uint8Array[] = [];
+    proc.stdout.on("data", (chunk) => chunks.push(chunk));
+    proc.stderr.on("data", (chunk) => errors.push(chunk));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(errors).toString("utf8") || `pdftotext exit ${code}`));
+        return;
+      }
+      resolve(Buffer.concat(chunks).toString("utf8").replace(/[ \t]+$/gm, "").trim());
+    });
+  });
+}
+
 async function extractPdfTextLayer(path: string): Promise<string> {
-  // Lightweight text-layer extraction by parsing raw PDF bytes for `(...)Tj` ops.
-  // Good enough for the easy case; OCR fallback handles everything else.
   const buf = await readFile(path);
   const txt = buf.toString("latin1");
   const out: string[] = [];
@@ -80,5 +98,5 @@ function runPdftoppm(input: string, outDir: string): Promise<void> {
 
 export const OCR_PROMPT =
   "Extract all readable text from this page verbatim. Preserve line breaks and paragraph structure. " +
-  "If a region contains tabular data, render it as a tab-separated table. Do not summarize, translate, " +
+  "If a region contains tabular data, render it as a GitHub-flavoured markdown table with a header row and separator row. Do not summarize, translate, " +
   "or add commentary. Output text only.";

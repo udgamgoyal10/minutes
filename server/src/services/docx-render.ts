@@ -147,6 +147,55 @@ function bulletParaXml(text: string, line: string): string {
   return `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:ind w:left="360" w:hanging="360"/><w:spacing w:after="120" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runsFromInline(text)}</w:p>`;
 }
 
+function splitMarkdownTableRow(line: string): string[] {
+  let text = line.trim();
+  if (!text.includes("|")) return [];
+  if (text.startsWith("|")) text = text.slice(1);
+  if (text.endsWith("|")) text = text.slice(0, -1);
+  const cells: string[] = [];
+  let current = "";
+  let escaped = false;
+  for (const ch of text) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells.length >= 2 ? cells : [];
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function tableCellParasXml(text: string, bold: boolean): string {
+  const parts = text.split(/<br\s*\/?\s*>/i).map((part) => part.trim()).filter(Boolean);
+  const safeParts = parts.length ? parts : [""];
+  return safeParts.map((part) => `<w:p><w:pPr><w:spacing w:after="0" w:line="${LINE_125}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runsFromInline(part, bold)}</w:p>`).join("");
+}
+
+function tableToWordXml(rows: string[][]): string {
+  if (!rows.length) return "";
+  const width = Math.max(...rows.map((row) => row.length));
+  const normalized = rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? ""));
+  const borders = '<w:top w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>';
+  const rowXml = normalized.map((row, rowIndex) => `<w:tr>${row.map((cell) => `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>${tableCellParasXml(cell, rowIndex === 0)}</w:tc>`).join("")}</w:tr>`).join("");
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${borders}</w:tblBorders></w:tblPr>${rowXml}</w:tbl>`;
+}
+
 function subHeaderParaXml(text: string, line: string): string {
   return `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr>${FONT}<w:b/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
 }
@@ -167,10 +216,25 @@ function introToWordXml(md: string): string {
     bullets = [];
   };
 
-  for (const raw of lines) {
-    const line = raw.trim();
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = (lines[i] ?? "").trim();
     if (!line) {
       flushBullets();
+      continue;
+    }
+    const tableHeader = splitMarkdownTableRow(line);
+    if (tableHeader.length && i + 1 < lines.length && isMarkdownTableSeparator(lines[i + 1] ?? "")) {
+      flushBullets();
+      const rows = [tableHeader];
+      i += 2;
+      while (i < lines.length) {
+        const row = splitMarkdownTableRow(lines[i] ?? "");
+        if (!row.length) break;
+        rows.push(row);
+        i += 1;
+      }
+      i -= 1;
+      paras.push(tableToWordXml(rows));
       continue;
     }
     if (/^[-*]\s+/.test(line)) {
@@ -251,10 +315,25 @@ function markdownToWordXml(md: string): string {
     bullets = [];
   };
 
-  for (const raw of lines) {
-    const line = raw.trim();
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = (lines[i] ?? "").trim();
     if (!line) {
       flushBullets();
+      continue;
+    }
+    const tableHeader = splitMarkdownTableRow(line);
+    if (tableHeader.length && i + 1 < lines.length && isMarkdownTableSeparator(lines[i + 1] ?? "")) {
+      flushBullets();
+      const rows = [tableHeader];
+      i += 2;
+      while (i < lines.length) {
+        const row = splitMarkdownTableRow(lines[i] ?? "");
+        if (!row.length) break;
+        rows.push(row);
+        i += 1;
+      }
+      i -= 1;
+      paras.push(tableToWordXml(rows));
       continue;
     }
     if (/^[-*]\s+/.test(line)) {
