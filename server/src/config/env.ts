@@ -44,7 +44,8 @@ export const env = {
   },
   anthropic: {
     apiKey: opt("ANTHROPIC_API_KEY"),
-    model: opt("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    model: opt("ANTHROPIC_MODEL", "claude-sonnet-5"),
+    maxOutputTokens: num("ANTHROPIC_MAX_OUTPUT_TOKENS", 65536),
   },
   gemini: {
     apiKey: opt("GOOGLE_API_KEY"),

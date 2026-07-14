@@ -8,6 +8,7 @@ import {
   useUploadSources,
   type SectionDraft,
 } from "../lib/api.ts";
+import { useAuth } from "../lib/auth.tsx";
 
 export function SectionSourcePanel({
   meetingId,
@@ -16,6 +17,7 @@ export function SectionSourcePanel({
   meetingId: number;
   section: SectionDraft;
 }) {
+  const { user } = useAuth();
   const sourcesQ = useSources(meetingId, section.section_key);
   const examplesQ = useSectionExamples(section.section_key);
   const upload = useUploadSources(meetingId);
@@ -177,6 +179,9 @@ export function SectionSourcePanel({
                 <span className="truncate">
                   [{s.kind}] {s.original_name ?? s.label ?? "pasted text"}
                   <span className="text-slate-400 ml-2">{s.label?.startsWith("__section:") ? "Optional section source" : s.label}</span>
+                  {(user?.role === "admin" || user?.role === "super_admin") && s.owner_email && s.owner_email !== user.email && (
+                    <span className="text-brand-600 ml-2">Meeting owner: {s.owner_email}</span>
+                  )}
                 </span>
                 <button
                   onClick={() => del.mutate(s.id)}

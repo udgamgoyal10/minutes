@@ -70,6 +70,7 @@ export type Source = {
   mime: string | null;
   extracted_text: string | null;
   section_key?: string | null;
+  owner_email?: string | null;
   created_at: string;
 };
 

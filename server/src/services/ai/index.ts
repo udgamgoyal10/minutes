@@ -42,7 +42,7 @@ export async function listAllProviders(): Promise<Array<{
   // the UI can surface the option (disabled) and prompt the user for an API key.
   const FALLBACK_MODELS: Record<ProviderId, string[]> = {
     ollama: [],
-    claude: ["claude-sonnet-4-6"],
+    claude: ["claude-sonnet-5"],
     gemini: [],
     openai: ["gpt-5.4"],
   };

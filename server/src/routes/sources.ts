@@ -20,6 +20,7 @@ type SourceRow = {
   extracted_text: string | null;
   section_key: string | null;
   created_at: string;
+  owner_email?: string | null;
 };
 
 function canAccessMeeting(meetingId: number, user: { id: number; role: string }): boolean {
@@ -40,6 +41,9 @@ r.get("/meetings/:id/sources", (c) => {
   const meetingId = Number(c.req.param("id"));
   if (!canAccessMeeting(meetingId, user)) return c.json({ error: "not found" }, 404);
   const sectionKey = c.req.query("section_key");
+  const select = isAdminRole(user.role)
+    ? "SELECT s.*, u.email AS owner_email FROM sources s JOIN meetings m ON m.id = s.meeting_id JOIN users u ON u.id = m.user_id"
+    : "SELECT s.* FROM sources s";
   if (sectionKey) {
     const draft = db.query<{ required_sources_json: string }, [number, string]>(
       "SELECT required_sources_json FROM section_drafts WHERE meeting_id = ? AND section_key = ?",
@@ -57,18 +61,18 @@ r.get("/meetings/:id/sources", (c) => {
     const optionalLabel = `__section:${sectionKey}`;
     if (!labels.length) {
       const rows = db.query<SourceRow, [number, string, string]>(
-        "SELECT * FROM sources WHERE meeting_id = ? AND (section_key = ? OR (section_key IS NULL AND label = ?)) ORDER BY id ASC",
+        `${select} WHERE s.meeting_id = ? AND (s.section_key = ? OR (s.section_key IS NULL AND s.label = ?)) ORDER BY s.id ASC`,
       ).all(meetingId, sectionKey, optionalLabel);
       return c.json({ sources: rows });
     }
     const placeholders = labels.map(() => "?").join(",");
     const rows = db.query<SourceRow, (number | string)[]>(
-      `SELECT * FROM sources WHERE meeting_id = ? AND (section_key = ? OR (section_key IS NULL AND (label IN (${placeholders}) OR label = ?))) ORDER BY id ASC`,
+      `${select} WHERE s.meeting_id = ? AND (s.section_key = ? OR (s.section_key IS NULL AND (s.label IN (${placeholders}) OR s.label = ?))) ORDER BY s.id ASC`,
     ).all(meetingId, sectionKey, ...labels, optionalLabel);
     return c.json({ sources: rows });
   }
   const rows = db.query<SourceRow, [number]>(
-    "SELECT * FROM sources WHERE meeting_id = ? ORDER BY id ASC",
+    `${select} WHERE s.meeting_id = ? ORDER BY s.id ASC`,
   ).all(meetingId);
   return c.json({ sources: rows });
 });

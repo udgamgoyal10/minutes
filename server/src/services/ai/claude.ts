@@ -9,14 +9,14 @@ export const claudeAdapter: Adapter = {
   async listModels() {
     // No public list endpoint that works without account permissions —
     // surface a curated set keyed off the configured default.
-    return ["claude-sonnet-4-6"];
+    return ["claude-sonnet-5"];
   },
   async generate(opts: GenerateOpts, onChunk?: StreamHandler): Promise<GenerateResult> {
     if (!env.anthropic.apiKey) throw new Error("ANTHROPIC_API_KEY not set");
     const model = opts.model || env.anthropic.model;
     const body = {
       model,
-      max_tokens: 4096,
+      max_tokens: env.anthropic.maxOutputTokens,
       system: opts.system,
       messages: [{ role: "user", content: opts.prompt }],
       stream: Boolean(opts.stream),
