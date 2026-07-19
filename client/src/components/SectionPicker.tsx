@@ -1,12 +1,17 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, FilePlus, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import {
+  useCreateOrganizationSectionTemplate,
   useCreateSectionTemplate,
   useDeleteSectionTemplate,
+  useResetOrganizationSectionTemplate,
   useSectionTemplates,
+  useSharedSectionTemplates,
   useTemplateVariables,
   useUpdateBaseSectionTemplate,
+  useUpdateOrganizationSectionTemplate,
   useUpdateSectionTemplate,
+  useUpdateSharedSectionTemplate,
   type SectionTemplate,
 } from "../lib/api.ts";
 
@@ -20,14 +25,22 @@ export function SectionPicker({
   onPick,
   excludeKeys,
   busyKey,
+  organizationId,
+  manageOnly = false,
+  sharedDefaults = false,
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (s: SectionTemplate) => void | Promise<void>;
+  onPick?: (s: SectionTemplate) => void | Promise<void>;
   excludeKeys?: string[];
   busyKey?: string | null;
+  organizationId?: number | null;
+  manageOnly?: boolean;
+  sharedDefaults?: boolean;
 }) {
-  const q = useSectionTemplates();
+  const organizationQ = useSectionTemplates(organizationId, !sharedDefaults);
+  const sharedQ = useSharedSectionTemplates(sharedDefaults);
+  const q = sharedDefaults ? sharedQ : organizationQ;
   const delTemplate = useDeleteSectionTemplate();
   const [search, setSearch] = useState("");
   // null = browse list; "new" = create form; SectionTemplate = edit that custom template.
@@ -59,6 +72,8 @@ export function SectionPicker({
         existing={editing === "new" ? null : editing}
         onCancel={() => setEditing(null)}
         onClose={onClose}
+        organizationId={organizationId}
+        sharedDefaults={sharedDefaults}
       />
     );
   }
@@ -67,14 +82,16 @@ export function SectionPicker({
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
-          <h2 className="text-lg font-semibold">Add section from catalog</h2>
+          <h2 className="text-lg font-semibold">{manageOnly ? "Section templates" : "Add section from catalog"}</h2>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setEditing("new")}
-              className="flex items-center gap-1 text-sm border border-slate-300 hover:bg-slate-50 rounded-md px-3 py-1.5"
-            >
-              <FilePlus className="size-4" /> New section template
-            </button>
+            {!sharedDefaults && (
+              <button
+                onClick={() => setEditing("new")}
+                className="flex items-center gap-1 text-sm border border-slate-300 hover:bg-slate-50 rounded-md px-3 py-1.5"
+              >
+                <FilePlus className="size-4" /> New section template
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
@@ -163,14 +180,16 @@ export function SectionPicker({
                         <Trash2 className="size-3.5" />
                       </button>
                     )}
-                    <button
-                      onClick={() => onPick(s)}
-                      disabled={alreadyAdded || busy}
-                      className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-                    >
-                      <Plus className="size-3.5" />
-                      {alreadyAdded ? "Added" : busy ? "Adding…" : "Add"}
-                    </button>
+                    {!manageOnly && onPick && (
+                      <button
+                        onClick={() => onPick(s)}
+                        disabled={alreadyAdded || busy}
+                        className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      >
+                        <Plus className="size-3.5" />
+                        {alreadyAdded ? "Added" : busy ? "Adding…" : "Add"}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -194,14 +213,22 @@ function SectionTemplateEditor({
   existing,
   onCancel,
   onClose,
+  organizationId,
+  sharedDefaults,
 }: {
   existing: SectionTemplate | null;
   onCancel: () => void;
   onClose: () => void;
+  organizationId?: number | null;
+  sharedDefaults?: boolean;
 }) {
   const create = useCreateSectionTemplate();
+  const createOrganizationTemplate = useCreateOrganizationSectionTemplate();
   const updateTemplate = useUpdateSectionTemplate();
   const updateBaseTemplate = useUpdateBaseSectionTemplate();
+  const updateOrganizationTemplate = useUpdateOrganizationSectionTemplate();
+  const updateSharedTemplate = useUpdateSharedSectionTemplate();
+  const resetOrganizationTemplate = useResetOrganizationSectionTemplate();
   const variablesQ = useTemplateVariables();
   const [title, setTitle] = useState(existing?.title ?? "");
   const [body, setBody] = useState(existing?.body_text ?? "");
@@ -214,7 +241,8 @@ function SectionTemplateEditor({
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = existing != null;
-  const busy = create.isPending || updateTemplate.isPending || updateBaseTemplate.isPending;
+  const busy = create.isPending || createOrganizationTemplate.isPending || updateTemplate.isPending ||
+    updateBaseTemplate.isPending || updateOrganizationTemplate.isPending || updateSharedTemplate.isPending || resetOrganizationTemplate.isPending;
   const catalog = [...(variablesQ.data?.variables ?? []), ...newVars.map((v) => ({ token: slugToken(v.raw), raw: v.raw, kind: v.kind }))]
     .filter((v) => !isGenderMetadataToken(v.token));
 
@@ -249,7 +277,15 @@ function SectionTemplateEditor({
       .filter((s) => s.length > 0);
     const required_variables = [...selectedVars];
     try {
-      if (isEdit && existing?.custom_id != null) {
+      if (sharedDefaults && isEdit && existing?.section_template_id != null) {
+        await updateSharedTemplate.mutateAsync({
+          sectionTemplateId: existing.section_template_id,
+          title: trimmed,
+          body_text: body,
+          required_sources,
+          required_variables,
+        });
+      } else if (isEdit && existing?.custom_id != null) {
         await updateTemplate.mutateAsync({
           customId: existing.custom_id,
           title: trimmed,
@@ -258,8 +294,26 @@ function SectionTemplateEditor({
           required_variables,
           new_variables: newVars,
         });
+      } else if (organizationId && isEdit && existing?.section_template_id != null) {
+        await updateOrganizationTemplate.mutateAsync({
+          organizationId,
+          sectionTemplateId: existing.section_template_id,
+          title: trimmed,
+          body_text: body,
+          required_sources,
+          required_variables,
+        });
+      } else if (organizationId && !isEdit) {
+        await createOrganizationTemplate.mutateAsync({
+          organizationId,
+          title: trimmed,
+          body_text: body,
+          required_sources,
+          required_variables,
+        });
       } else if (isEdit && existing) {
         await updateBaseTemplate.mutateAsync({
+
           sectionKey: existing.key,
           title: trimmed,
           body_text: body,
@@ -288,9 +342,16 @@ function SectionTemplateEditor({
             >
               <ArrowLeft className="size-5" />
             </button>
-            <h2 className="text-lg font-semibold">
-              {isEdit ? "Edit section template" : "New section template"}
-            </h2>
+            <div>
+              <h2 className="text-lg font-semibold">
+                {isEdit ? "Edit section template" : "New section template"}
+              </h2>
+              {(organizationId || sharedDefaults) && (
+                <p className="text-xs text-slate-500">
+                  {sharedDefaults ? "Shared default for all organizations" : existing?.is_overridden ? "Organization override" : existing?.is_shared ? "Using shared default" : "Organization-specific section"}
+                </p>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -373,21 +434,37 @@ function SectionTemplateEditor({
           </div>
           {error && <p className="text-sm text-rose-600">{error}</p>}
         </div>
-        <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={save}
-            disabled={busy}
-            className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
-          >
-            {busy && <Loader2 className="size-4 animate-spin" />}
-            {isEdit ? "Save changes" : "Create template"}
-          </button>
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-between gap-2">
+          <div>
+            {organizationId && existing?.section_template_id != null && existing.is_overridden && (
+              <button
+                onClick={async () => {
+                  await resetOrganizationTemplate.mutateAsync({ organizationId, sectionTemplateId: existing.section_template_id! });
+                  onCancel();
+                }}
+                disabled={busy}
+                className="text-sm text-amber-700 hover:text-amber-900 px-3 py-1.5 disabled:opacity-50"
+              >
+                Reset to shared default
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onCancel}
+              className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+            >
+              {busy && <Loader2 className="size-4 animate-spin" />}
+              {isEdit ? "Save changes" : "Create template"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

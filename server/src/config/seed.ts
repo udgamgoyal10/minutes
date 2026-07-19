@@ -2,7 +2,8 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { db } from "./db.ts";
 import { env } from "./env.ts";
-import { parseTemplate } from "../services/template-parser.ts";
+import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
+import { buildFlexibleMeetingTemplate, MEETING_TEMPLATE_TITLES } from "../services/meeting-template-catalog.ts";
 
 async function seedAdmin(): Promise<void> {
   const configuredEmail = env.adminEmail.trim().toLowerCase();
@@ -75,16 +76,45 @@ async function seedTemplates(): Promise<void> {
       const existing = db.query<{ id: number }, [number, string]>(
         "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
       ).get(org.id, slug);
-      if (existing) continue;
+      if (existing) {
+        const title = MEETING_TEMPLATE_TITLES[slug];
+        if (title) db.run("UPDATE meeting_templates SET title = ? WHERE id = ?", [title, existing.id]);
+        continue;
+      }
 
       const docxPath = join(orgDir, f);
       const parsed = await parseTemplate(docxPath);
+      const title = MEETING_TEMPLATE_TITLES[slug] ?? parsed.title;
       db.run(
         `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
          VALUES (?, ?, ?, ?, ?)`,
-        [org.id, slug, parsed.title, docxPath, JSON.stringify(parsed)],
+        [org.id, slug, title, docxPath, JSON.stringify(parsed)],
       );
       console.log(`[seed] template registered: ${orgSlug}/${slug} (${parsed.sections.length} sections)`);
+    }
+
+    const base = db.query<{ docx_path: string; parsed_json: string }, [number, string]>(
+      "SELECT docx_path, parsed_json FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+    ).get(org.id, "meeting-1");
+    if (!base) continue;
+    const parsed = buildFlexibleMeetingTemplate(JSON.parse(base.parsed_json) as ParsedTemplate);
+    const existing = db.query<{ id: number }, [number, string]>(
+      "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+    ).get(org.id, "flexible-meeting");
+    if (existing) {
+      db.run("UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?", [
+        parsed.title,
+        base.docx_path,
+        JSON.stringify(parsed),
+        existing.id,
+      ]);
+    } else {
+      db.run(
+        `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+         VALUES (?, ?, ?, ?, ?)`,
+        [org.id, "flexible-meeting", parsed.title, base.docx_path, JSON.stringify(parsed)],
+      );
+      console.log(`[seed] template registered: ${orgSlug}/flexible-meeting (${parsed.sections.length} sections)`);
     }
   }
 }

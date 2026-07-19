@@ -301,6 +301,7 @@ export function SetupPage() {
         onClose={() => setPickerOpen(false)}
         excludeKeys={(sectionsQ.data?.sections ?? []).map((s) => s.section_key)}
         busyKey={busyAddKey}
+        organizationId={meeting?.organization_id ?? template?.organization_id ?? null}
         onPick={async (s: SectionTemplate) => {
           setBusyAddKey(s.key);
           try {

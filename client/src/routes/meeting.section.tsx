@@ -15,6 +15,7 @@ import {
   useSectionPrompt,
   useSections,
   useSources,
+  useTemplates,
   useUpdateSection,
   type ProviderInfo,
   type SectionDraft,
@@ -32,6 +33,7 @@ export function SectionPage() {
   const navigate = useNavigate();
 
   const meetingQ = useMeeting(meetingId);
+  const templatesQ = useTemplates();
   const sectionsQ = useSections(meetingId);
   const sourcesQ = useSources(meetingId, sectionKey);
   const providersQ = useProviders();
@@ -56,6 +58,8 @@ export function SectionPage() {
   }, [sectionKey]);
 
   const sections = sectionsQ.data?.sections ?? [];
+  const meeting = meetingQ.data?.meeting;
+  const templateOrganizationId = templatesQ.data?.templates.find((template) => template.id === meeting?.template_id)?.organization_id;
   const hasIntro = sections.some((s) => s.section_key === "introduction");
   const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
   const idx = sections.findIndex((s) => s.section_key === sectionKey);
@@ -308,6 +312,7 @@ export function SectionPage() {
           onClose={() => setPickerOpen(false)}
           excludeKeys={sections.map((s) => s.section_key)}
           busyKey={busyAddKey}
+          organizationId={meeting?.organization_id ?? templateOrganizationId ?? null}
           onPick={async (s: SectionTemplate) => {
             setBusyAddKey(s.key);
             try {

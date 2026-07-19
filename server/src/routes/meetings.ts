@@ -4,6 +4,7 @@ import { isAdminRole, requireAuth } from "../middleware/auth.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import { canonicalPlaceholder, canonicalToken, inferRequiredVariables, setupVariableCatalog } from "../services/template-variables.ts";
 import type { ParsedTemplate } from "../services/template-parser.ts";
+import { getMeetingStructure, listOrganizationSections } from "../services/organization-templates.ts";
 
 const r = new Hono();
 r.use("*", requireAuth);
@@ -20,6 +21,8 @@ type TemplateRow = {
 type MeetingRow = {
   id: number;
   template_id: number;
+  organization_id: number | null;
+  meeting_structure_id: number | null;
   user_id: number;
   label: string;
   meeting_date: string | null;
@@ -414,6 +417,8 @@ r.get("/templates", (c) => {
 
 r.get("/section-templates", (c) => {
   const user = c.get("user");
+  const organizationId = Number(c.req.query("organization_id"));
+  if (organizationId) return c.json({ sections: listOrganizationSections(organizationId, user.id) });
   return c.json({ sections: sectionTemplateCatalog(user.id, user.role) });
 });
 
@@ -684,46 +689,55 @@ r.get("/meetings", (c) => {
 r.post("/meetings", async (c) => {
   const user = c.get("user");
   const body = await c.req.json().catch(() => null) as
-    | { template_id?: number; label?: string }
+    | { template_id?: number; structure_id?: number; label?: string }
     | null;
-  if (!body?.template_id) return c.json({ error: "template_id required" }, 400);
+  const structure = body?.structure_id ? getMeetingStructure(body.structure_id, user.id) : null;
+  if (body?.structure_id && !structure) return c.json({ error: "meeting type not found" }, 404);
+  const templateId = structure?.base_template_id ?? body?.template_id;
+  if (!templateId) return c.json({ error: "structure_id required" }, 400);
   const tpl = db.query<TemplateRow, [number]>("SELECT * FROM meeting_templates WHERE id = ?")
-    .get(body.template_id);
-  if (!tpl) return c.json({ error: "template not found" }, 404);
-  const label = body.label?.trim() || `${tpl.title} — ${new Date().toLocaleDateString()}`;
-
-  const res = db.run(
-    `INSERT INTO meetings (template_id, user_id, label, variables_json) VALUES (?, ?, ?, '{}')`,
-    [tpl.id, user.id, label],
-  );
-  const meetingId = Number(res.lastInsertRowid);
-
-  // Seed empty section_drafts so the UI has rows to render
+    .get(templateId);
+  if (!tpl) return c.json({ error: "document layout not found" }, 404);
+  const organizationId = structure?.organization_id ?? tpl.organization_id;
+  const label = body?.label?.trim() || `${structure?.name ?? tpl.title} — ${new Date().toLocaleDateString()}`;
   const parsed = JSON.parse(tpl.parsed_json) as ParsedTemplate;
-  const sectionCatalog = new Map(sectionTemplateCatalog(user.id).map((section) => [section.key, section]));
+  const legacyCatalog = new Map(sectionTemplateCatalog(user.id).map((section) => [section.key, section]));
+  const resolvedSections = structure?.sections ?? parsed.sections.map((section) => {
+    const catalogSection = legacyCatalog.get(section.key);
+    return {
+      key: section.key,
+      title: catalogSection?.title ?? section.title,
+      body_text: catalogSection?.body_text ?? section.bodyText,
+      required_sources: catalogSection?.required_sources ?? inferRequiredSources(section.title, section.bodyText),
+      required_variables: catalogSection?.required_variables ?? inferRequiredVariables(section.bodyText, section.title),
+    };
+  });
   const insertSec = db.prepare(
     `INSERT INTO section_drafts (meeting_id, section_key, ordinal, title, content_md, template_body_text, status, mode, required_sources_json, required_variables_json)
      VALUES (?, ?, ?, ?, ?, ?, 'pending', 'template', ?, ?)`,
   );
+  let meetingId = 0;
   const tx = db.transaction(() => {
-    for (const s of parsed.sections) {
-      const catalogSection = sectionCatalog.get(s.key);
-      const title = catalogSection?.title ?? s.title;
-      const bodyText = catalogSection?.body_text ?? s.bodyText;
-      const requiredSources = catalogSection?.required_sources ?? inferRequiredSources(title, bodyText);
-      const requiredVariables = catalogSection?.required_variables ??
-        mergeVariables(inferRequiredVariables(bodyText, title), userMappedVariables(user.id, s.key));
+    const result = db.run(
+      `INSERT INTO meetings
+         (template_id, organization_id, meeting_structure_id, user_id, label, variables_json)
+       VALUES (?, ?, ?, ?, ?, '{}')`,
+      [tpl.id, organizationId, structure?.id ?? null, user.id, label],
+    );
+    meetingId = Number(result.lastInsertRowid);
+    resolvedSections.forEach((section, index) => {
+      const requiredVariables = effectiveRequiredVariables(user.id, section.key, section.required_variables);
       insertSec.run(
         meetingId,
-        s.key,
-        s.ordinal,
-        title,
-        bodyText,
-        bodyText,
-        JSON.stringify(requiredSources),
+        section.key,
+        index + 1,
+        section.title,
+        section.body_text,
+        section.body_text,
+        JSON.stringify(section.required_sources),
         JSON.stringify(requiredVariables),
       );
-    }
+    });
   });
   tx();
 
@@ -822,6 +836,8 @@ function rowToMeeting(row: MeetingRow) {
   return {
     id: row.id,
     template_id: row.template_id,
+    organization_id: row.organization_id,
+    meeting_structure_id: row.meeting_structure_id,
     user_id: row.user_id,
     owner_email: "owner_email" in row ? (row as MeetingRow & { owner_email?: string }).owner_email ?? null : null,
     label: row.label,

@@ -2,6 +2,7 @@ import { db } from "./db.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import { inferRequiredVariables } from "../services/template-variables.ts";
 import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
+import { buildFlexibleMeetingTemplate, MEETING_TEMPLATE_TITLES } from "../services/meeting-template-catalog.ts";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
@@ -1146,6 +1147,165 @@ const migrations: Migration[] = [
     name: "meeting_is_annual",
     up: () => {
       db.exec("ALTER TABLE meetings ADD COLUMN is_annual INTEGER NOT NULL DEFAULT 0;");
+    },
+  },
+  {
+    id: 29,
+    name: "meeting_template_titles_and_flexible_meeting",
+    up: () => {
+      const org = db.query<{ id: number }, [string]>(
+        "SELECT id FROM organizations WHERE slug = ?",
+      ).get("jkp");
+      if (!org) return;
+      for (const [slug, title] of Object.entries(MEETING_TEMPLATE_TITLES)) {
+        db.run("UPDATE meeting_templates SET title = ? WHERE organization_id = ? AND slug = ?", [
+          title,
+          org.id,
+          slug,
+        ]);
+      }
+      const base = db.query<{ docx_path: string; parsed_json: string }, [number, string]>(
+        "SELECT docx_path, parsed_json FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+      ).get(org.id, "meeting-1");
+      if (!base) return;
+      const parsed = buildFlexibleMeetingTemplate(JSON.parse(base.parsed_json) as ParsedTemplate);
+      const existing = db.query<{ id: number }, [number, string]>(
+        "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+      ).get(org.id, "flexible-meeting");
+      if (existing) {
+        db.run("UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?", [
+          parsed.title,
+          base.docx_path,
+          JSON.stringify(parsed),
+          existing.id,
+        ]);
+      } else {
+        db.run(
+          `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [org.id, "flexible-meeting", parsed.title, base.docx_path, JSON.stringify(parsed)],
+        );
+      }
+    },
+  },
+  {
+    id: 30,
+    name: "organization_template_model",
+    up: () => {
+      db.exec(`
+        CREATE TABLE section_template_definitions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key TEXT NOT NULL UNIQUE,
+          owner_organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          body_text TEXT NOT NULL DEFAULT '',
+          required_sources_json TEXT NOT NULL DEFAULT '[]',
+          required_variables_json TEXT NOT NULL DEFAULT '[]',
+          origin_template_id INTEGER REFERENCES meeting_templates(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_section_template_definitions_owner
+          ON section_template_definitions(owner_organization_id);
+
+        CREATE TABLE organization_section_overrides (
+          organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          section_template_id INTEGER NOT NULL REFERENCES section_template_definitions(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          body_text TEXT NOT NULL DEFAULT '',
+          required_sources_json TEXT NOT NULL DEFAULT '[]',
+          required_variables_json TEXT NOT NULL DEFAULT '[]',
+          updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (organization_id, section_template_id)
+        );
+
+        CREATE TABLE meeting_structures (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          base_template_id INTEGER NOT NULL REFERENCES meeting_templates(id) ON DELETE RESTRICT,
+          slug TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          is_default INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (organization_id, slug)
+        );
+        CREATE INDEX idx_meeting_structures_organization
+          ON meeting_structures(organization_id, is_active, name);
+
+        CREATE TABLE meeting_structure_sections (
+          meeting_structure_id INTEGER NOT NULL REFERENCES meeting_structures(id) ON DELETE CASCADE,
+          section_template_id INTEGER NOT NULL REFERENCES section_template_definitions(id) ON DELETE RESTRICT,
+          ordinal INTEGER NOT NULL,
+          PRIMARY KEY (meeting_structure_id, section_template_id),
+          UNIQUE (meeting_structure_id, ordinal)
+        );
+
+        ALTER TABLE meetings ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE RESTRICT;
+        ALTER TABLE meetings ADD COLUMN meeting_structure_id INTEGER REFERENCES meeting_structures(id) ON DELETE SET NULL;
+      `);
+
+      const templates = db.query<{
+        id: number;
+        organization_id: number;
+        slug: string;
+        title: string;
+        parsed_json: string;
+      }, []>(
+        "SELECT id, organization_id, slug, title, parsed_json FROM meeting_templates ORDER BY id",
+      ).all();
+      const insertDefinition = db.prepare(
+        `INSERT OR IGNORE INTO section_template_definitions
+           (key, owner_organization_id, title, body_text, required_sources_json, required_variables_json, origin_template_id)
+         VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+      );
+      for (const template of templates) {
+        const parsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        for (const section of parsed.sections) {
+          insertDefinition.run(
+            section.key,
+            section.title,
+            section.bodyText,
+            JSON.stringify(inferRequiredSources(section.title, section.bodyText)),
+            JSON.stringify(inferRequiredVariables(section.bodyText, section.title)),
+            template.id,
+          );
+        }
+      }
+
+      const insertStructure = db.prepare(
+        `INSERT INTO meeting_structures
+           (organization_id, base_template_id, slug, name, is_default)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      const insertStructureSection = db.prepare(
+        `INSERT INTO meeting_structure_sections
+           (meeting_structure_id, section_template_id, ordinal)
+         VALUES (?, ?, ?)`,
+      );
+      const seenOrganizations = new Set<number>();
+      for (const template of templates) {
+        const structure = insertStructure.run(
+          template.organization_id,
+          template.id,
+          template.slug,
+          template.title,
+          seenOrganizations.has(template.organization_id) ? 0 : 1,
+        );
+        seenOrganizations.add(template.organization_id);
+        const structureId = Number(structure.lastInsertRowid);
+        const parsed = JSON.parse(template.parsed_json) as ParsedTemplate;
+        for (const [index, section] of parsed.sections.entries()) {
+          const definition = db.query<{ id: number }, [string]>(
+            "SELECT id FROM section_template_definitions WHERE key = ?",
+          ).get(section.key);
+          if (definition) insertStructureSection.run(structureId, definition.id, index + 1);
+        }
+      }
     },
   },
 

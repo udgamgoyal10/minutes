@@ -80,7 +80,7 @@ function loadMeetingCtx(meetingId: number, user: { id: number; role: string }): 
               t.parsed_json, o.name AS org_name
        FROM meetings m
        JOIN meeting_templates t ON t.id = m.template_id
-       JOIN organizations o ON o.id = t.organization_id
+       JOIN organizations o ON o.id = COALESCE(m.organization_id, t.organization_id)
        WHERE m.id = ?`,
     ).get(meetingId) ?? null;
   }
@@ -90,7 +90,7 @@ function loadMeetingCtx(meetingId: number, user: { id: number; role: string }): 
             t.parsed_json, o.name AS org_name
      FROM meetings m
      JOIN meeting_templates t ON t.id = m.template_id
-     JOIN organizations o ON o.id = t.organization_id
+     JOIN organizations o ON o.id = COALESCE(m.organization_id, t.organization_id)
      WHERE m.id = ? AND m.user_id = ?`,
   ).get(meetingId, user.id) ?? null;
 }

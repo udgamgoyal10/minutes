@@ -47,6 +47,8 @@ export type Organization = { id: number; slug: string; name: string };
 export type Meeting = {
   id: number;
   template_id: number;
+  organization_id: number | null;
+  meeting_structure_id: number | null;
   user_id: number;
   owner_email?: string | null;
   label: string;
@@ -193,6 +195,18 @@ export function useOrganizations() {
   });
 }
 
+export function useCreateOrganization() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { name: string; slug?: string }) =>
+      apiFetch<{ organization: Organization }>("/api/organizations", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["organizations"] }),
+  });
+}
+
 export function useTemplates() {
   return useQuery({
     queryKey: ["templates"],
@@ -238,7 +252,7 @@ export function useCreateUser() {
 export function useCreateMeeting() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { template_id: number; label?: string }) =>
+    mutationFn: (vars: { structure_id?: number; template_id?: number; label?: string }) =>
       apiFetch<{ meeting: Meeting }>("/api/meetings", {
         method: "POST",
         body: JSON.stringify(vars),
@@ -377,6 +391,7 @@ export function useCreateSection(meetingId: number) {
 }
 
 export type SectionTemplate = {
+  section_template_id?: number | null;
   key: string;
   title: string;
   body_text: string;
@@ -390,12 +405,163 @@ export type SectionTemplate = {
   owner_user_id?: number;
   owner_email?: string | null;
   can_edit?: boolean;
+  organization_id?: number;
+  owner_organization_id?: number | null;
+  is_overridden?: boolean;
+  is_shared?: boolean;
+  shared_title?: string;
+  shared_body_text?: string;
+  shared_required_sources?: string[];
+  shared_required_variables?: string[];
 };
 
-export function useSectionTemplates() {
+export type MeetingStructure = {
+  id: number;
+  organization_id: number;
+  base_template_id: number;
+  slug: string;
+  name: string;
+  description: string;
+  is_default: boolean;
+  is_active: boolean;
+  sections: SectionTemplate[];
+};
+
+export function useSectionTemplates(organizationId?: number | null, enabled = true) {
   return useQuery({
-    queryKey: ["section-templates"],
-    queryFn: () => apiFetch<{ sections: SectionTemplate[] }>(`/api/section-templates`),
+    queryKey: ["section-templates", organizationId ?? "legacy"],
+    queryFn: () => organizationId
+      ? apiFetch<{ sections: SectionTemplate[] }>(`/api/organizations/${organizationId}/section-templates`)
+      : apiFetch<{ sections: SectionTemplate[] }>(`/api/section-templates`),
+    enabled,
+  });
+}
+
+export function useSharedSectionTemplates(enabled = true) {
+  return useQuery({
+    queryKey: ["section-templates", "shared"],
+    queryFn: () => apiFetch<{ sections: SectionTemplate[] }>("/api/shared-section-templates"),
+    enabled,
+  });
+}
+
+export function useUpdateSharedSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      sectionTemplateId: number;
+      title: string;
+      body_text: string;
+      required_sources?: string[];
+      required_variables?: string[];
+    }) => apiFetch<{ section: SectionTemplate }>(`/api/shared-section-templates/${vars.sectionTemplateId}`, {
+      method: "PUT",
+      body: JSON.stringify(vars),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["section-templates", "shared"] });
+      qc.invalidateQueries({ queryKey: ["section-templates"] });
+    },
+  });
+}
+
+export function useMeetingStructures(organizationId?: number | null) {
+  return useQuery({
+    queryKey: ["meeting-structures", organizationId],
+    queryFn: () => apiFetch<{ structures: MeetingStructure[] }>(`/api/meeting-structures?organization_id=${organizationId}`),
+    enabled: Boolean(organizationId),
+  });
+}
+
+export function useCreateMeetingStructure() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      organization_id: number;
+      name: string;
+      description?: string;
+      base_template_id?: number;
+      copy_from_structure_id?: number;
+      section_template_ids?: number[];
+    }) => apiFetch<{ structure: MeetingStructure }>("/api/meeting-structures", {
+      method: "POST",
+      body: JSON.stringify(vars),
+    }),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: ["meeting-structures", data.structure.organization_id] }),
+  });
+}
+
+export function useUpdateMeetingStructure() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: number;
+      organizationId: number;
+      name?: string;
+      description?: string;
+      base_template_id?: number;
+      is_default?: boolean;
+      is_active?: boolean;
+      section_template_ids?: number[];
+    }) => apiFetch<{ structure: MeetingStructure }>(`/api/meeting-structures/${vars.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: vars.name,
+        description: vars.description,
+        base_template_id: vars.base_template_id,
+        is_default: vars.is_default,
+        is_active: vars.is_active,
+        section_template_ids: vars.section_template_ids,
+      }),
+    }),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: ["meeting-structures", data.structure.organization_id] }),
+  });
+}
+
+export function useCreateOrganizationSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      organizationId: number;
+      title: string;
+      body_text: string;
+      required_sources?: string[];
+      required_variables?: string[];
+    }) => apiFetch<{ section: SectionTemplate }>(`/api/organizations/${vars.organizationId}/section-templates`, {
+      method: "POST",
+      body: JSON.stringify(vars),
+    }),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: ["section-templates", data.section.organization_id] }),
+  });
+}
+
+export function useUpdateOrganizationSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      organizationId: number;
+      sectionTemplateId: number;
+      title: string;
+      body_text: string;
+      required_sources?: string[];
+      required_variables?: string[];
+    }) => apiFetch<{ section: SectionTemplate }>(
+      `/api/organizations/${vars.organizationId}/section-templates/${vars.sectionTemplateId}`,
+      { method: "PUT", body: JSON.stringify(vars) },
+    ),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: ["section-templates", data.section.organization_id] }),
+  });
+}
+
+export function useResetOrganizationSectionTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { organizationId: number; sectionTemplateId: number }) =>
+      apiFetch<{ section: SectionTemplate }>(
+        `/api/organizations/${vars.organizationId}/section-templates/${vars.sectionTemplateId}/override`,
+        { method: "DELETE" },
+      ),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: ["section-templates", data.section.organization_id] }),
   });
 }
 
