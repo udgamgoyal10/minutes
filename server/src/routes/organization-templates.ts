@@ -18,7 +18,9 @@ const r = new Hono();
 r.use("*", requireAuth);
 
 function organizationExists(id: number): boolean {
-  return Boolean(db.query<{ id: number }, [number]>("SELECT id FROM organizations WHERE id = ?").get(id));
+  return Boolean(
+    db.query<{ id: number }, [number]>("SELECT id FROM organizations WHERE id = ?").get(id),
+  );
 }
 
 function requireAdmin(role: string): boolean {
@@ -28,9 +30,12 @@ function requireAdmin(role: string): boolean {
 r.post("/organizations", async (c) => {
   const user = c.get("user");
   if (!isSuperAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
-  const body = await c.req.json().catch(() => ({})) as Partial<{ name: string; slug: string }>;
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{ name: string; slug: string }>;
   const name = body.name?.trim() ?? "";
-  const slug = (body.slug?.trim() || name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = (body.slug?.trim() || name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   if (!name || !slug) return c.json({ error: "organization name required" }, 400);
   if (db.query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?").get(slug)) {
     return c.json({ error: "organization already exists" }, 409);
@@ -43,14 +48,16 @@ r.patch("/organizations/:id", async (c) => {
   const user = c.get("user");
   if (!isSuperAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
   const id = Number(c.req.param("id"));
-  const body = await c.req.json().catch(() => ({})) as Partial<{ name: string }>;
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{ name: string }>;
   const name = body.name?.trim();
   if (!name) return c.json({ error: "organization name required" }, 400);
   const result = db.run("UPDATE organizations SET name = ? WHERE id = ?", [name, id]);
   if (!result.changes) return c.json({ error: "organization not found" }, 404);
-  const organization = db.query<{ id: number; slug: string; name: string }, [number]>(
-    "SELECT id, slug, name FROM organizations WHERE id = ?",
-  ).get(id);
+  const organization = db
+    .query<{ id: number; slug: string; name: string }, [number]>(
+      "SELECT id, slug, name FROM organizations WHERE id = ?",
+    )
+    .get(id);
   return c.json({ organization });
 });
 
@@ -64,7 +71,7 @@ r.put("/shared-section-templates/:sectionTemplateId", async (c) => {
   const user = c.get("user");
   if (!isSuperAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
   const sectionTemplateId = Number(c.req.param("sectionTemplateId"));
-  const body = await c.req.json().catch(() => ({})) as Partial<{
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
     title: string;
     body_text: string;
     required_sources: string[];
@@ -95,7 +102,7 @@ r.post("/organizations/:id/section-templates", async (c) => {
   if (!requireAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
   const organizationId = Number(c.req.param("id"));
   if (!organizationExists(organizationId)) return c.json({ error: "organization not found" }, 404);
-  const body = await c.req.json().catch(() => ({})) as Partial<{
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
     title: string;
     body_text: string;
     required_sources: string[];
@@ -118,7 +125,7 @@ r.put("/organizations/:id/section-templates/:sectionTemplateId", async (c) => {
   if (!requireAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
   const organizationId = Number(c.req.param("id"));
   const sectionTemplateId = Number(c.req.param("sectionTemplateId"));
-  const body = await c.req.json().catch(() => ({})) as Partial<{
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
     title: string;
     body_text: string;
     required_sources: string[];
@@ -145,16 +152,21 @@ r.delete("/organizations/:id/section-templates/:sectionTemplateId/override", (c)
   const organizationId = Number(c.req.param("id"));
   const sectionTemplateId = Number(c.req.param("sectionTemplateId"));
   resetOrganizationOverride(organizationId, sectionTemplateId);
-  const section = listOrganizationSections(organizationId, user.id)
-    .find((item) => item.section_template_id === sectionTemplateId) ?? null;
+  const section =
+    listOrganizationSections(organizationId, user.id).find(
+      (item) => item.section_template_id === sectionTemplateId,
+    ) ?? null;
   return c.json({ section });
 });
 
 r.get("/meeting-structures", (c) => {
   const user = c.get("user");
   const organizationId = Number(c.req.query("organization_id"));
-  if (!organizationId || !organizationExists(organizationId)) return c.json({ error: "valid organization_id required" }, 400);
-  return c.json({ structures: listMeetingStructures(organizationId, user.id, isAdminRole(user.role)) });
+  if (!organizationId || !organizationExists(organizationId))
+    return c.json({ error: "valid organization_id required" }, 400);
+  return c.json({
+    structures: listMeetingStructures(organizationId, user.id, isAdminRole(user.role)),
+  });
 });
 
 r.get("/meeting-structures/:id", (c) => {
@@ -167,23 +179,28 @@ r.get("/meeting-structures/:id", (c) => {
 r.post("/meeting-structures", async (c) => {
   const user = c.get("user");
   if (!requireAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
-  const body = await c.req.json().catch(() => ({})) as Partial<{
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
     organization_id: number;
     name: string;
     description: string;
+    meeting_body: string;
+    is_annual: boolean;
     base_template_id: number;
     copy_from_structure_id: number;
     section_template_ids: number[];
   }>;
   const organizationId = Number(body.organization_id);
   const name = body.name?.trim() ?? "";
-  if (!organizationId || !organizationExists(organizationId)) return c.json({ error: "valid organization required" }, 400);
+  if (!organizationId || !organizationExists(organizationId))
+    return c.json({ error: "valid organization required" }, 400);
   if (!name) return c.json({ error: "meeting type name required" }, 400);
   try {
     const structure = createMeetingStructure({
       organizationId,
       name,
       description: body.description,
+      meetingBody: body.meeting_body,
+      isAnnual: body.is_annual,
       baseTemplateId: body.base_template_id,
       copyFromStructureId: body.copy_from_structure_id,
       sectionTemplateIds: body.section_template_ids,
@@ -198,9 +215,11 @@ r.patch("/meeting-structures/:id", async (c) => {
   const user = c.get("user");
   if (!requireAdmin(user.role)) return c.json({ error: "forbidden" }, 403);
   const id = Number(c.req.param("id"));
-  const body = await c.req.json().catch(() => ({})) as Partial<{
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
     name: string;
     description: string;
+    meeting_body: string;
+    is_annual: boolean;
     base_template_id: number;
     is_default: boolean;
     is_active: boolean;
@@ -211,6 +230,8 @@ r.patch("/meeting-structures/:id", async (c) => {
       id,
       name: body.name,
       description: body.description,
+      meetingBody: body.meeting_body,
+      isAnnual: body.is_annual,
       baseTemplateId: body.base_template_id,
       isDefault: body.is_default,
       isActive: body.is_active,

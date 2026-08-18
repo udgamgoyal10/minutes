@@ -12,7 +12,23 @@ export const REQUIRED_TEMPLATE_VARIABLES: Array<{ token: string; raw: string }> 
   { token: "treasurer", raw: "Treasurer" },
 ];
 
+export const RGS_REQUIRED_TEMPLATE_VARIABLES: Array<{ token: string; raw: string }> = [
+  { token: "president", raw: "President" },
+  { token: "secretary", raw: "Secretary" },
+  { token: "treasurer", raw: "Treasurer" },
+];
+
 export const ADDITIONAL_TEMPLATE_VARIABLES = [
+  "Member 1",
+  "Member 2",
+  "Member 3",
+  "Member 4",
+  "Member 5",
+  "Member 6",
+  "Member 3 S/O Father of Member 3",
+  "Authorized Office Bearer",
+  "Date of Annual General Body Meeting",
+  "Date of Adoption of Annual (Foreign Accounts)",
   "Daan Peti Individual 1",
   "Daan Peti Individual 2",
   "Daan Peti Individual 3",
@@ -54,13 +70,21 @@ export const ADDITIONAL_TEMPLATE_VARIABLES = [
 const SECTION_VARIABLE_MAP: Record<string, string[]> = {
   "maintenance-of-gardens": ["caretaker-of-gardens"],
   "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-other-gardens": ["caretaker-of-gardens"],
-  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": ["caretaker-of-gardens"],
-  "free-distribution-program-for-underprivileged-school-children-and-poor-people": ["administrator-of-jkp-education"],
+  "maintenance-of-gardens-amra-vatika-bhakti-kunj-and-all-the-other-gardens": [
+    "caretaker-of-gardens",
+  ],
+  "free-distribution-program-for-underprivileged-school-children-and-poor-people": [
+    "administrator-of-jkp-education",
+  ],
 };
 
 // Tokens whose value is a single date the user picks; rendered as a formatted
 // date string (e.g. "5 September 2024") rather than expanded into day/month/year.
-export const SIMPLE_DATE_TOKENS = new Set(["date-of-janmashtami"]);
+export const SIMPLE_DATE_TOKENS = new Set([
+  "date-of-janmashtami",
+  "date-of-annual-general-body-meeting",
+  "date-of-adoption-of-annual-foreign-accounts",
+]);
 
 // Variables that the user fills in as a single date; the day/month/year
 // placeholders inside the template body are derived automatically from it.
@@ -142,10 +166,12 @@ export function canonicalToken(raw: string): string {
   // different phrasing; unify it onto the adoption-of-annual-accounts year so it
   // is filled from the same setup date.
   if (token === "year-of-adoption-of-annual-accounts") return "adoption-of-annual-accounts-year";
-  if (token === "administrator-of-jagadguru-kripalu-parishat-education-in-kunda") return "administrator-of-jkp-education";
+  if (token === "administrator-of-jagadguru-kripalu-parishat-education-in-kunda")
+    return "administrator-of-jkp-education";
   if (token === "administrator-of-jkp-education-in-kunda") return "administrator-of-jkp-education";
   // Any "Financial Year (e.g. …)" phrasing collapses to a single variable.
-  if (token.startsWith("financial-year")) return "financial-year";
+  if (token.startsWith("financial-year") || token === "current-financial-year")
+    return "financial-year";
   return token;
 }
 
@@ -162,7 +188,11 @@ export function mergePlaceholders(placeholders: Placeholder[]): Placeholder[] {
   return [...out.values()];
 }
 
-export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlaceholders: Placeholder[]): Placeholder[] {
+export function setupPlaceholders(
+  globalPlaceholders: Placeholder[],
+  allPlaceholders: Placeholder[],
+  organizationSlug = "jkp",
+): Placeholder[] {
   const additional = ADDITIONAL_TEMPLATE_VARIABLES.map((raw) => canonicalPlaceholder(raw)).filter(
     (p): p is Placeholder => p != null,
   );
@@ -177,7 +207,9 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
   );
   // Required variables always lead the list and carry the `required` flag so the
   // setup page can always surface them, even when no section references them.
-  const required: Placeholder[] = REQUIRED_TEMPLATE_VARIABLES.map((v) => ({
+  const requiredVariables =
+    organizationSlug === "rgs" ? RGS_REQUIRED_TEMPLATE_VARIABLES : REQUIRED_TEMPLATE_VARIABLES;
+  const required: Placeholder[] = requiredVariables.map((v) => ({
     token: v.token,
     raw: v.raw,
     required: true,
@@ -194,11 +226,19 @@ export function setupPlaceholders(globalPlaceholders: Placeholder[], allPlacehol
 // The curated, template-independent set of variables a user can fill on the
 // setup page. Used to (a) drive the section-template variable picker and (b)
 // decide which body <placeholders> count as fillable setup variables.
-export function setupVariableCatalog(): Placeholder[] {
-  const required: Placeholder[] = REQUIRED_TEMPLATE_VARIABLES.map((v) => ({
-    token: v.token,
-    raw: v.raw,
-    required: true,
+export function setupVariableCatalog(organizationSlug = "jkp"): Placeholder[] {
+  const selectedRequired =
+    organizationSlug === "rgs" ? RGS_REQUIRED_TEMPLATE_VARIABLES : REQUIRED_TEMPLATE_VARIABLES;
+  const allRequired = mergePlaceholders(
+    [...selectedRequired, ...REQUIRED_TEMPLATE_VARIABLES, ...RGS_REQUIRED_TEMPLATE_VARIABLES].map((v) => ({
+      token: v.token,
+      raw: v.raw,
+    })),
+  );
+  const requiredTokens = new Set(selectedRequired.map((v) => v.token));
+  const required: Placeholder[] = allRequired.map((v) => ({
+    ...v,
+    required: requiredTokens.has(v.token) || undefined,
   }));
   const additional = ADDITIONAL_TEMPLATE_VARIABLES.map((raw) => canonicalPlaceholder(raw))
     .filter((p): p is Placeholder => p != null)
@@ -235,7 +275,13 @@ export function inferRequiredVariables(bodyText = "", title = ""): string[] {
     const mapped = DATE_ALIAS_TO_VAR[tok] ?? tok;
     if (KNOWN_SETUP_TOKENS.has(mapped)) tokens.add(mapped);
   }
-  for (const role of ["managing-trustee", "secretary", "treasurer", "income-tax-representative", "medical-superintendent"]) {
+  for (const role of [
+    "managing-trustee",
+    "secretary",
+    "treasurer",
+    "income-tax-representative",
+    "medical-superintendent",
+  ]) {
     if (
       tokens.has(`${role}-subject-pronoun`) ||
       tokens.has(`${role}-object-pronoun`) ||
@@ -294,7 +340,13 @@ export function buildTemplateVariables(args: {
       out[date.yearToken] = parts.year;
     }
   }
-  for (const role of ["managing-trustee", "secretary", "treasurer", "income-tax-representative", "medical-superintendent"]) {
+  for (const role of [
+    "managing-trustee",
+    "secretary",
+    "treasurer",
+    "income-tax-representative",
+    "medical-superintendent",
+  ]) {
     const pronouns = pronounsForGender(out[`${role}-gender`]);
     if (!pronouns) continue;
     out[`${role}-subject-pronoun`] ||= pronouns.subject;
@@ -315,7 +367,9 @@ export function fillTemplateText(text: string, variables: Record<string, string>
   });
 }
 
-function pronounsForGender(value?: string | null): { subject: string; object: string; possessive: string } | null {
+function pronounsForGender(
+  value?: string | null,
+): { subject: string; object: string; possessive: string } | null {
   const v = (value ?? "").trim().toLowerCase();
   if (["female", "f", "woman", "lady", "she", "her"].includes(v)) {
     return { subject: "she", object: "her", possessive: "her" };

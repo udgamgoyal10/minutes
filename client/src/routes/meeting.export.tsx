@@ -9,7 +9,9 @@ export function ExportPage() {
   const previewQ = usePreview(meetingId);
 
   const sections = previewQ.data?.sections ?? [];
-  const hasIntro = sections.some((s) => s.section_key === "introduction");
+  const hasIntro = sections.some(
+    (s) => s.section_key === "introduction" || s.section_key.endsWith("-introduction"),
+  );
   return (
     <div>
       <StepNav meetingId={meetingId} current="export" />
@@ -29,7 +31,10 @@ export function ExportPage() {
         {sections.map((s) => (
           <section key={s.section_key} className="mb-6">
             <h3 className="font-semibold text-slate-900 mb-1">
-              {s.section_key === "introduction" ? "" : `${hasIntro ? s.ordinal - 1 : s.ordinal}. `}{s.title}
+              {s.section_key === "introduction" || s.section_key.endsWith("-introduction")
+                ? ""
+                : `${hasIntro ? s.ordinal - 1 : s.ordinal}. `}
+              {s.title}
               <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
                 {s.status}
               </span>

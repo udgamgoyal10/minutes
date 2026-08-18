@@ -25,36 +25,49 @@ type Ctx = {
 // opens with "Minutes of the Annual Meeting …" instead of "Minutes of the Meeting …".
 function applyAnnualMeetingWording(sections: ApprovedSection[]): ApprovedSection[] {
   return sections.map((section) => {
-    if (section.key !== "introduction") return section;
-    if (/minutes of the annual meeting/i.test(section.content_md)) return section;
+    if (section.key !== "introduction" && !section.key.endsWith("-introduction")) return section;
+    if (/minutes of the annual(?: general)? meeting/i.test(section.content_md)) return section;
     return {
       ...section,
-      content_md: section.content_md.replace(/\bMinutes of the Meeting\b/i, "Minutes of the Annual Meeting"),
+      content_md: section.content_md.replace(
+        /\bMinutes of the Meeting\b/i,
+        "Minutes of the Annual Meeting",
+      ),
     };
   });
 }
 
 function loadCtx(meetingId: number, user: { id: number; role: string }): Ctx | null {
   if (isAdminRole(user.role)) {
-    return db.query<Ctx, [number]>(
-      `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
+    return (
+      db
+        .query<Ctx, [number]>(
+          `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
        FROM meetings m
        JOIN meeting_templates t ON t.id = m.template_id
        WHERE m.id = ?`,
-    ).get(meetingId) ?? null;
+        )
+        .get(meetingId) ?? null
+    );
   }
-  return db.query<Ctx, [number, number]>(
-    `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
+  return (
+    db
+      .query<Ctx, [number, number]>(
+        `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
      FROM meetings m
      JOIN meeting_templates t ON t.id = m.template_id
      WHERE m.id = ? AND m.user_id = ?`,
-  ).get(meetingId, user.id) ?? null;
+      )
+      .get(meetingId, user.id) ?? null
+  );
 }
 
 function loadSections(meetingId: number, ctx: Ctx, filled: boolean): ApprovedSection[] {
-  const rows = db.query<ApprovedSection, [number]>(
-    "SELECT section_key as key, ordinal, title, content_md, template_body_text FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
-  ).all(meetingId);
+  const rows = db
+    .query<ApprovedSection, [number]>(
+      "SELECT section_key as key, ordinal, title, content_md, template_body_text FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
+    )
+    .all(meetingId);
   const annualized = ctx.is_annual ? applyAnnualMeetingWording(rows) : rows;
   if (!filled) return annualized;
   const variables = buildTemplateVariables({
@@ -99,13 +112,18 @@ r.get("/meetings/:id/export/docx", async (c) => {
 
 r.post("/meetings/export/docx", async (c) => {
   const user = c.get("user");
-  const body = await c.req.json().catch(() => ({})) as Partial<{ meeting_ids: number[] }>;
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{ meeting_ids: number[] }>;
   const ids = Array.isArray(body.meeting_ids)
-    ? [...new Set(body.meeting_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
+    ? [
+        ...new Set(
+          body.meeting_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+        ),
+      ]
     : [];
   if (!ids.length) return c.json({ error: "meeting_ids required" }, 400);
   const contexts = ids.map((id) => loadCtx(id, user)).filter((ctx): ctx is Ctx => ctx != null);
-  if (contexts.length !== ids.length) return c.json({ error: "one or more meetings were not found" }, 404);
+  if (contexts.length !== ids.length)
+    return c.json({ error: "one or more meetings were not found" }, 404);
   contexts.sort((a, b) => sortDate(a).localeCompare(sortDate(b)) || a.id - b.id);
   const bytes = await renderCombinedDocx({
     templatePath: contexts[0]!.docx_path,
@@ -142,9 +160,14 @@ r.get("/meetings/:id/preview", async (c) => {
   const id = Number(c.req.param("id"));
   const ctx = loadCtx(id, user);
   if (!ctx) return c.json({ error: "not found" }, 404);
-  const sections = db.query<{ section_key: string; ordinal: number; title: string; content_md: string; status: string }, [number]>(
-    "SELECT section_key, ordinal, title, content_md, status FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
-  ).all(id);
+  const sections = db
+    .query<
+      { section_key: string; ordinal: number; title: string; content_md: string; status: string },
+      [number]
+    >(
+      "SELECT section_key, ordinal, title, content_md, status FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
+    )
+    .all(id);
   const variables = buildTemplateVariables({
     variables: JSON.parse(ctx.variables_json) as Record<string, string>,
     meetingDate: ctx.meeting_date,

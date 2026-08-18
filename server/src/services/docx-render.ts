@@ -81,7 +81,8 @@ function rebuildBody(xml: string, rendered: string): string {
 }
 
 // 12pt Calibri for the whole document (sz is in half-points).
-const FONT = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>';
+const FONT =
+  '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="24"/><w:szCs w:val="24"/>';
 // Line spacing in 240ths (auto): 1.25 = 300, 1.5 = 360.
 const LINE_125 = "300";
 const LINE_15 = "360";
@@ -109,11 +110,12 @@ function sectionsToWordXml(sections: ApprovedSection[]): string {
   let counter = 0;
   return sorted
     .map((section) => {
-      if (section.key === "introduction") {
+      if (section.key === "introduction" || section.key.endsWith("-introduction")) {
         // No "Introduction" heading; the body carries its own sub-headers.
         return introToWordXml(section.content_md);
       }
-      const unnumbered = section.key === "vote-of-thanks" || /\bvote of thanks\b/i.test(section.title);
+      const unnumbered =
+        section.key === "vote-of-thanks" || /\bvote of thanks\b/i.test(section.title);
       const heading = unnumbered ? section.title : `${(counter += 1)}. ${section.title}`;
       return `${headingToWordXml(heading)}${markdownToWordXml(section.content_md)}`;
     })
@@ -126,7 +128,10 @@ function headingToWordXml(title: string): string {
 }
 
 function normalizeHeaderText(s: string): string {
-  return s.trim().replace(/[:：]\s*$/, "").toLowerCase();
+  return s
+    .trim()
+    .replace(/[:：]\s*$/, "")
+    .toLowerCase();
 }
 
 function isFullyBold(line: string): boolean {
@@ -137,7 +142,11 @@ function stripSurroundingBold(line: string): string {
   return isFullyBold(line) ? line.slice(2, -2) : line;
 }
 
-function bodyParaXml(text: string, line: string, opts: { bold?: boolean; jc?: string } = {}): string {
+function bodyParaXml(
+  text: string,
+  line: string,
+  opts: { bold?: boolean; jc?: string } = {},
+): string {
   const jc = opts.jc ?? "both";
   return `<w:p><w:pPr><w:spacing w:after="120" w:line="${line}" w:lineRule="auto"/><w:jc w:val="${jc}"/></w:pPr>${runsFromInline(text, opts.bold)}</w:p>`;
 }
@@ -182,17 +191,31 @@ function isMarkdownTableSeparator(line: string): boolean {
 }
 
 function tableCellParasXml(text: string, bold: boolean): string {
-  const parts = text.split(/<br\s*\/?\s*>/i).map((part) => part.trim()).filter(Boolean);
+  const parts = text
+    .split(/<br\s*\/?\s*>/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
   const safeParts = parts.length ? parts : [""];
-  return safeParts.map((part) => `<w:p><w:pPr><w:spacing w:after="0" w:line="${LINE_125}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runsFromInline(part, bold)}</w:p>`).join("");
+  return safeParts
+    .map(
+      (part) =>
+        `<w:p><w:pPr><w:spacing w:after="0" w:line="${LINE_125}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runsFromInline(part, bold)}</w:p>`,
+    )
+    .join("");
 }
 
 function tableToWordXml(rows: string[][]): string {
   if (!rows.length) return "";
   const width = Math.max(...rows.map((row) => row.length));
   const normalized = rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? ""));
-  const borders = '<w:top w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>';
-  const rowXml = normalized.map((row, rowIndex) => `<w:tr>${row.map((cell) => `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>${tableCellParasXml(cell, rowIndex === 0)}</w:tc>`).join("")}</w:tr>`).join("");
+  const borders =
+    '<w:top w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>';
+  const rowXml = normalized
+    .map(
+      (row, rowIndex) =>
+        `<w:tr>${row.map((cell) => `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>${tableCellParasXml(cell, rowIndex === 0)}</w:tc>`).join("")}</w:tr>`,
+    )
+    .join("");
   return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${borders}</w:tblBorders></w:tblPr>${rowXml}</w:tbl>`;
 }
 
@@ -223,7 +246,11 @@ function introToWordXml(md: string): string {
       continue;
     }
     const tableHeader = splitMarkdownTableRow(line);
-    if (tableHeader.length && i + 1 < lines.length && isMarkdownTableSeparator(lines[i + 1] ?? "")) {
+    if (
+      tableHeader.length &&
+      i + 1 < lines.length &&
+      isMarkdownTableSeparator(lines[i + 1] ?? "")
+    ) {
       flushBullets();
       const rows = [tableHeader];
       i += 2;
@@ -285,23 +312,27 @@ function replacePlaceholders(xml: string, vars: Record<string, string>): string 
 // text node cannot contain raw angle brackets (they are XML-escaped), so we
 // match the escaped &lt;…&gt; form inside <w:t> nodes and split the run.
 function colorizeUnfilledPlaceholders(xml: string): string {
-  const RUN_RE = /<w:r\b[^>]*>(<w:rPr>[\s\S]*?<\/w:rPr>)?(<w:t(?:\s[^>]*)?>)([^<]*)(<\/w:t>)<\/w:r>/g;
-  return xml.replace(RUN_RE, (full, rPr: string | undefined, tOpen: string, text: string, tClose: string) => {
-    if (!/&lt;[^&]{1,200}?&gt;/.test(text)) return full;
-    const rpr = rPr ?? "";
-    const redRpr = rpr
-      ? rpr.replace("</w:rPr>", '<w:color w:val="FF0000"/></w:rPr>')
-      : '<w:rPr><w:color w:val="FF0000"/></w:rPr>';
-    // Split the text into placeholder vs. plain segments, preserving order.
-    const segments = text.split(/(&lt;[^&]{1,200}?&gt;)/).filter((s) => s.length > 0);
-    return segments
-      .map((seg) => {
-        const isPlaceholder = /^&lt;[^&]{1,200}?&gt;$/.test(seg);
-        const pr = isPlaceholder ? redRpr : rpr;
-        return `<w:r>${pr}${tOpen}${seg}${tClose}</w:r>`;
-      })
-      .join("");
-  });
+  const RUN_RE =
+    /<w:r\b[^>]*>(<w:rPr>[\s\S]*?<\/w:rPr>)?(<w:t(?:\s[^>]*)?>)([^<]*)(<\/w:t>)<\/w:r>/g;
+  return xml.replace(
+    RUN_RE,
+    (full, rPr: string | undefined, tOpen: string, text: string, tClose: string) => {
+      if (!/&lt;[^&]{1,200}?&gt;/.test(text)) return full;
+      const rpr = rPr ?? "";
+      const redRpr = rpr
+        ? rpr.replace("</w:rPr>", '<w:color w:val="FF0000"/></w:rPr>')
+        : '<w:rPr><w:color w:val="FF0000"/></w:rPr>';
+      // Split the text into placeholder vs. plain segments, preserving order.
+      const segments = text.split(/(&lt;[^&]{1,200}?&gt;)/).filter((s) => s.length > 0);
+      return segments
+        .map((seg) => {
+          const isPlaceholder = /^&lt;[^&]{1,200}?&gt;$/.test(seg);
+          const pr = isPlaceholder ? redRpr : rpr;
+          return `<w:r>${pr}${tOpen}${seg}${tClose}</w:r>`;
+        })
+        .join("");
+    },
+  );
 }
 
 function markdownToWordXml(md: string): string {
@@ -322,7 +353,11 @@ function markdownToWordXml(md: string): string {
       continue;
     }
     const tableHeader = splitMarkdownTableRow(line);
-    if (tableHeader.length && i + 1 < lines.length && isMarkdownTableSeparator(lines[i + 1] ?? "")) {
+    if (
+      tableHeader.length &&
+      i + 1 < lines.length &&
+      isMarkdownTableSeparator(lines[i + 1] ?? "")
+    ) {
       flushBullets();
       const rows = [tableHeader];
       i += 2;

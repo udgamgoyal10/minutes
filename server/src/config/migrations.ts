@@ -2,7 +2,15 @@ import { db } from "./db.ts";
 import { inferRequiredSources } from "../services/source-recommendations.ts";
 import { inferRequiredVariables } from "../services/template-variables.ts";
 import { parseTemplate, type ParsedTemplate } from "../services/template-parser.ts";
-import { buildFlexibleMeetingTemplate, MEETING_TEMPLATE_TITLES } from "../services/meeting-template-catalog.ts";
+import {
+  buildFlexibleMeetingTemplate,
+  MEETING_TEMPLATE_TITLES,
+} from "../services/meeting-template-catalog.ts";
+import {
+  buildRgsParsedTemplate,
+  RGS_MEETING_TEMPLATES,
+  RGS_SECTIONS,
+} from "../services/rgs-template-catalog.ts";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
@@ -110,17 +118,22 @@ const migrations: Migration[] = [
         ALTER TABLE section_drafts ADD COLUMN required_sources_json TEXT NOT NULL DEFAULT '[]';
       `);
 
-      const rows = db.query<{
-        meeting_id: number;
-        section_key: string;
-        content_md: string;
-        parsed_json: string;
-      }, []>(
-        `SELECT s.meeting_id, s.section_key, s.content_md, t.parsed_json
+      const rows = db
+        .query<
+          {
+            meeting_id: number;
+            section_key: string;
+            content_md: string;
+            parsed_json: string;
+          },
+          []
+        >(
+          `SELECT s.meeting_id, s.section_key, s.content_md, t.parsed_json
          FROM section_drafts s
          JOIN meetings m ON m.id = s.meeting_id
          JOIN meeting_templates t ON t.id = m.template_id`,
-      ).all();
+        )
+        .all();
 
       const update = db.prepare(
         `UPDATE section_drafts
@@ -149,18 +162,23 @@ const migrations: Migration[] = [
     id: 3,
     name: "refresh_section_source_recommendations",
     up: () => {
-      const rows = db.query<{
-        meeting_id: number;
-        section_key: string;
-        title: string;
-        content_md: string;
-        parsed_json: string;
-      }, []>(
-        `SELECT s.meeting_id, s.section_key, s.title, s.content_md, t.parsed_json
+      const rows = db
+        .query<
+          {
+            meeting_id: number;
+            section_key: string;
+            title: string;
+            content_md: string;
+            parsed_json: string;
+          },
+          []
+        >(
+          `SELECT s.meeting_id, s.section_key, s.title, s.content_md, t.parsed_json
          FROM section_drafts s
          JOIN meetings m ON m.id = s.meeting_id
          JOIN meeting_templates t ON t.id = m.template_id`,
-      ).all();
+        )
+        .all();
 
       const update = db.prepare(
         `UPDATE section_drafts
@@ -188,11 +206,16 @@ const migrations: Migration[] = [
     id: 4,
     name: "refresh_template_sections_from_docx",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
@@ -203,18 +226,23 @@ const migrations: Migration[] = [
           template.id,
         ]);
 
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
 
-        const existingRows = db.query<{
-          id: number;
-          meeting_id: number;
-          section_key: string;
-          content_md: string;
-          status: string;
-          last_ai_provider: string | null;
-        }, [number]>("SELECT id, meeting_id, section_key, content_md, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC");
+        const existingRows = db.query<
+          {
+            id: number;
+            meeting_id: number;
+            section_key: string;
+            content_md: string;
+            status: string;
+            last_ai_provider: string | null;
+          },
+          [number]
+        >(
+          "SELECT id, meeting_id, section_key, content_md, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
+        );
 
         const updateExisting = db.prepare(
           `UPDATE section_drafts
@@ -238,9 +266,12 @@ const migrations: Migration[] = [
             for (const section of parsed.sections) {
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
               const existing = byKey.get(section.key);
-              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              const required = JSON.stringify(
+                inferRequiredSources(section.title, section.bodyText),
+              );
               if (existing) {
-                const canReplaceContent = !existing.content_md ||
+                const canReplaceContent =
+                  !existing.content_md ||
                   existing.content_md === oldSection?.bodyText ||
                   (existing.status === "pending" && !existing.last_ai_provider);
                 updateExisting.run(
@@ -271,12 +302,17 @@ const migrations: Migration[] = [
     id: 5,
     name: "tighten_section_source_recommendations",
     up: () => {
-      const rows = db.query<{
-        meeting_id: number;
-        section_key: string;
-        title: string;
-        content_md: string;
-      }, []>("SELECT meeting_id, section_key, title, content_md FROM section_drafts").all();
+      const rows = db
+        .query<
+          {
+            meeting_id: number;
+            section_key: string;
+            title: string;
+            content_md: string;
+          },
+          []
+        >("SELECT meeting_id, section_key, title, content_md FROM section_drafts")
+        .all();
 
       const update = db.prepare(
         `UPDATE section_drafts
@@ -300,11 +336,16 @@ const migrations: Migration[] = [
     id: 6,
     name: "merge_intro_and_refresh_variables",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
@@ -315,18 +356,21 @@ const migrations: Migration[] = [
           template.id,
         ]);
 
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
 
-        const selectSections = db.query<{
-          id: number;
-          section_key: string;
-          content_md: string;
-          status: string;
-          mode: string;
-          last_ai_provider: string | null;
-        }, [number]>(
+        const selectSections = db.query<
+          {
+            id: number;
+            section_key: string;
+            content_md: string;
+            status: string;
+            mode: string;
+            last_ai_provider: string | null;
+          },
+          [number]
+        >(
           `SELECT id, section_key, content_md, status, mode, last_ai_provider
            FROM section_drafts
            WHERE meeting_id = ?
@@ -359,19 +403,28 @@ const migrations: Migration[] = [
             for (const section of parsed.sections) {
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
               const existing = byKey.get(section.key);
-              const introRows = section.key === "introduction"
-                ? [
-                  byKey.get("notice-of-the-meeting"),
-                  byKey.get("signing-of-minutes"),
-                  byKey.get("approval-of-proceedings"),
-                ].filter((row): row is NonNullable<typeof row> => row != null)
-                : [];
-              const mergedIntroContent = introRows.some((row) => row.status !== "pending" || row.last_ai_provider)
-                ? introRows.map((row) => row.content_md).filter(Boolean).join("\n\n")
+              const introRows =
+                section.key === "introduction"
+                  ? [
+                      byKey.get("notice-of-the-meeting"),
+                      byKey.get("signing-of-minutes"),
+                      byKey.get("approval-of-proceedings"),
+                    ].filter((row): row is NonNullable<typeof row> => row != null)
+                  : [];
+              const mergedIntroContent = introRows.some(
+                (row) => row.status !== "pending" || row.last_ai_provider,
+              )
+                ? introRows
+                    .map((row) => row.content_md)
+                    .filter(Boolean)
+                    .join("\n\n")
                 : section.bodyText;
-              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              const required = JSON.stringify(
+                inferRequiredSources(section.title, section.bodyText),
+              );
               if (existing) {
-                const canReplaceContent = !existing.content_md ||
+                const canReplaceContent =
+                  !existing.content_md ||
                   existing.content_md === oldSection?.bodyText ||
                   (existing.status === "pending" && !existing.last_ai_provider);
                 updateExisting.run(
@@ -403,11 +456,16 @@ const migrations: Migration[] = [
     id: 7,
     name: "refresh_intro_variables_and_source_map",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         const oldParsed = JSON.parse(template.parsed_json) as ParsedTemplate;
@@ -418,16 +476,19 @@ const migrations: Migration[] = [
           template.id,
         ]);
 
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
-        const selectSections = db.query<{
-          id: number;
-          section_key: string;
-          content_md: string;
-          status: string;
-          last_ai_provider: string | null;
-        }, [number]>(
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
+        const selectSections = db.query<
+          {
+            id: number;
+            section_key: string;
+            content_md: string;
+            status: string;
+            last_ai_provider: string | null;
+          },
+          [number]
+        >(
           `SELECT id, section_key, content_md, status, last_ai_provider
            FROM section_drafts
            WHERE meeting_id = ?
@@ -455,9 +516,12 @@ const migrations: Migration[] = [
             for (const section of parsed.sections) {
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
               const existing = byKey.get(section.key);
-              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              const required = JSON.stringify(
+                inferRequiredSources(section.title, section.bodyText),
+              );
               if (existing) {
-                const canReplaceContent = !existing.content_md ||
+                const canReplaceContent =
+                  !existing.content_md ||
                   existing.content_md === oldSection?.bodyText ||
                   (existing.status === "pending" && !existing.last_ai_provider);
                 updateExisting.run(
@@ -488,10 +552,15 @@ const migrations: Migration[] = [
     id: 8,
     name: "refresh_maintenance_source_recommendations",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+          },
+          []
+        >("SELECT id, docx_path FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         const parsed = await parseTemplate(template.docx_path);
@@ -502,12 +571,19 @@ const migrations: Migration[] = [
         ]);
       }
 
-      const rows = db.query<{
-        id: number;
-        title: string;
-        content_md: string;
-      }, []>("SELECT id, title, content_md FROM section_drafts").all();
-      const update = db.prepare("UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?");
+      const rows = db
+        .query<
+          {
+            id: number;
+            title: string;
+            content_md: string;
+          },
+          []
+        >("SELECT id, title, content_md FROM section_drafts")
+        .all();
+      const update = db.prepare(
+        "UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?",
+      );
       const tx = db.transaction(() => {
         for (const row of rows) {
           update.run(JSON.stringify(inferRequiredSources(row.title, row.content_md)), row.id);
@@ -520,9 +596,9 @@ const migrations: Migration[] = [
     id: 9,
     name: "register_meeting_2_template",
     up: async () => {
-      const org = db.query<{ id: number }, [string]>(
-        "SELECT id FROM organizations WHERE slug = ?",
-      ).get("jkp");
+      const org = db
+        .query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?")
+        .get("jkp");
       if (!org) return;
 
       const templatePaths = [
@@ -534,9 +610,11 @@ const migrations: Migration[] = [
         if (!existsSync(docxPath)) continue;
         const slug = basename(docxPath, ".docx");
         const parsed = await parseTemplate(docxPath);
-        const existing = db.query<{ id: number }, [number, string]>(
-          "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
-        ).get(org.id, slug);
+        const existing = db
+          .query<{ id: number }, [number, string]>(
+            "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+          )
+          .get(org.id, slug);
         if (existing) {
           db.run(
             "UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?",
@@ -551,12 +629,19 @@ const migrations: Migration[] = [
         }
       }
 
-      const rows = db.query<{
-        id: number;
-        title: string;
-        content_md: string;
-      }, []>("SELECT id, title, content_md FROM section_drafts").all();
-      const update = db.prepare("UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?");
+      const rows = db
+        .query<
+          {
+            id: number;
+            title: string;
+            content_md: string;
+          },
+          []
+        >("SELECT id, title, content_md FROM section_drafts")
+        .all();
+      const update = db.prepare(
+        "UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?",
+      );
       const tx = db.transaction(() => {
         for (const row of rows) {
           update.run(JSON.stringify(inferRequiredSources(row.title, row.content_md)), row.id);
@@ -570,20 +655,23 @@ const migrations: Migration[] = [
     name: "section_template_body_text",
     up: () => {
       db.exec("ALTER TABLE section_drafts ADD COLUMN template_body_text TEXT NOT NULL DEFAULT '';");
-      const rows = db.query<{
-        id: number;
-        section_key: string;
-        content_md: string;
-        parsed_json: string;
-      }, []>(
-        `SELECT s.id, s.section_key, s.content_md, t.parsed_json
+      const rows = db
+        .query<
+          {
+            id: number;
+            section_key: string;
+            content_md: string;
+            parsed_json: string;
+          },
+          []
+        >(
+          `SELECT s.id, s.section_key, s.content_md, t.parsed_json
          FROM section_drafts s
          JOIN meetings m ON m.id = s.meeting_id
          JOIN meeting_templates t ON t.id = m.template_id`,
-      ).all();
-      const update = db.prepare(
-        "UPDATE section_drafts SET template_body_text = ? WHERE id = ?",
-      );
+        )
+        .all();
+      const update = db.prepare("UPDATE section_drafts SET template_body_text = ? WHERE id = ?");
       const tx = db.transaction(() => {
         for (const row of rows) {
           const parsed = JSON.parse(row.parsed_json) as ParsedTemplate;
@@ -598,11 +686,16 @@ const migrations: Migration[] = [
     id: 11,
     name: "refresh_templates_v3",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         if (!existsSync(template.docx_path)) continue;
@@ -614,19 +707,22 @@ const migrations: Migration[] = [
           template.id,
         ]);
 
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
 
-        const existingStmt = db.query<{
-          id: number;
-          meeting_id: number;
-          section_key: string;
-          content_md: string;
-          template_body_text: string;
-          status: string;
-          last_ai_provider: string | null;
-        }, [number]>(
+        const existingStmt = db.query<
+          {
+            id: number;
+            meeting_id: number;
+            section_key: string;
+            content_md: string;
+            template_body_text: string;
+            status: string;
+            last_ai_provider: string | null;
+          },
+          [number]
+        >(
           "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
         );
 
@@ -653,9 +749,12 @@ const migrations: Migration[] = [
             for (const section of parsed.sections) {
               const existing = byKey.get(section.key);
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
-              const required = JSON.stringify(inferRequiredSources(section.title, section.bodyText));
+              const required = JSON.stringify(
+                inferRequiredSources(section.title, section.bodyText),
+              );
               if (existing) {
-                const canReplaceContent = !existing.content_md ||
+                const canReplaceContent =
+                  !existing.content_md ||
                   existing.content_md === oldSection?.bodyText ||
                   existing.content_md === existing.template_body_text ||
                   (existing.status === "pending" && !existing.last_ai_provider);
@@ -689,18 +788,20 @@ const migrations: Migration[] = [
     id: 12,
     name: "register_meeting_3_template",
     up: async () => {
-      const org = db.query<{ id: number }, [string]>(
-        "SELECT id FROM organizations WHERE slug = ?",
-      ).get("jkp");
+      const org = db
+        .query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?")
+        .get("jkp");
       if (!org) return;
 
       const docxPath = resolve(process.cwd(), "templates", "jkp", "meeting-3.docx");
       if (!existsSync(docxPath)) return;
       const slug = basename(docxPath, ".docx");
       const parsed = await parseTemplate(docxPath);
-      const existing = db.query<{ id: number }, [number, string]>(
-        "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
-      ).get(org.id, slug);
+      const existing = db
+        .query<{ id: number }, [number, string]>(
+          "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+        )
+        .get(org.id, slug);
       if (existing) {
         db.run(
           "UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?",
@@ -719,10 +820,15 @@ const migrations: Migration[] = [
     id: 13,
     name: "refresh_templates_v4_and_sources",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+          },
+          []
+        >("SELECT id, docx_path FROM meeting_templates")
+        .all();
       for (const template of templates) {
         if (!existsSync(template.docx_path)) continue;
         const parsed = await parseTemplate(template.docx_path);
@@ -733,11 +839,16 @@ const migrations: Migration[] = [
         ]);
       }
 
-      const rows = db.query<{
-        id: number;
-        title: string;
-        content_md: string;
-      }, []>("SELECT id, title, content_md FROM section_drafts").all();
+      const rows = db
+        .query<
+          {
+            id: number;
+            title: string;
+            content_md: string;
+          },
+          []
+        >("SELECT id, title, content_md FROM section_drafts")
+        .all();
       const update = db.prepare(
         "UPDATE section_drafts SET required_sources_json = ?, updated_at = datetime('now') WHERE id = ?",
       );
@@ -753,11 +864,16 @@ const migrations: Migration[] = [
     id: 14,
     name: "refresh_templates_v5_rosa_boilerplate",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
 
       for (const template of templates) {
         if (!existsSync(template.docx_path)) continue;
@@ -769,19 +885,22 @@ const migrations: Migration[] = [
           template.id,
         ]);
 
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
 
-        const existingStmt = db.query<{
-          id: number;
-          meeting_id: number;
-          section_key: string;
-          content_md: string;
-          template_body_text: string;
-          status: string;
-          last_ai_provider: string | null;
-        }, [number]>(
+        const existingStmt = db.query<
+          {
+            id: number;
+            meeting_id: number;
+            section_key: string;
+            content_md: string;
+            template_body_text: string;
+            status: string;
+            last_ai_provider: string | null;
+          },
+          [number]
+        >(
           "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
         );
 
@@ -802,7 +921,8 @@ const migrations: Migration[] = [
               const existing = byKey.get(section.key);
               if (!existing) continue;
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
-              const canReplaceContent = !existing.content_md ||
+              const canReplaceContent =
+                !existing.content_md ||
                 existing.content_md === oldSection?.bodyText ||
                 existing.content_md === existing.template_body_text ||
                 (existing.status === "pending" && !existing.last_ai_provider);
@@ -843,10 +963,15 @@ const migrations: Migration[] = [
     up: async () => {
       // Re-parse templates so parsed_json reflects the current parser (clean,
       // de-duplicated global placeholders + always-present required variables).
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-      }, []>("SELECT id, docx_path FROM meeting_templates").all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+          },
+          []
+        >("SELECT id, docx_path FROM meeting_templates")
+        .all();
       for (const template of templates) {
         if (!existsSync(template.docx_path)) continue;
         const parsed = await parseTemplate(template.docx_path);
@@ -880,27 +1005,41 @@ const migrations: Migration[] = [
     id: 18,
     name: "section_required_variables",
     up: () => {
-      db.exec("ALTER TABLE section_drafts ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';");
-      db.exec("ALTER TABLE custom_section_templates ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';");
+      db.exec(
+        "ALTER TABLE section_drafts ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';",
+      );
+      db.exec(
+        "ALTER TABLE custom_section_templates ADD COLUMN required_variables_json TEXT NOT NULL DEFAULT '[]';",
+      );
 
-      const drafts = db.query<{ id: number; title: string; template_body_text: string }, []>(
-        "SELECT id, title, template_body_text FROM section_drafts",
-      ).all();
+      const drafts = db
+        .query<{ id: number; title: string; template_body_text: string }, []>(
+          "SELECT id, title, template_body_text FROM section_drafts",
+        )
+        .all();
       const updateDraft = db.prepare(
         "UPDATE section_drafts SET required_variables_json = ? WHERE id = ?",
       );
-      const customs = db.query<{ id: number; title: string; body_text: string }, []>(
-        "SELECT id, title, body_text FROM custom_section_templates",
-      ).all();
+      const customs = db
+        .query<{ id: number; title: string; body_text: string }, []>(
+          "SELECT id, title, body_text FROM custom_section_templates",
+        )
+        .all();
       const updateCustom = db.prepare(
         "UPDATE custom_section_templates SET required_variables_json = ? WHERE id = ?",
       );
       const tx = db.transaction(() => {
         for (const d of drafts) {
-          updateDraft.run(JSON.stringify(inferRequiredVariables(d.template_body_text ?? "", d.title)), d.id);
+          updateDraft.run(
+            JSON.stringify(inferRequiredVariables(d.template_body_text ?? "", d.title)),
+            d.id,
+          );
         }
         for (const cust of customs) {
-          updateCustom.run(JSON.stringify(inferRequiredVariables(cust.body_text ?? "", cust.title)), cust.id);
+          updateCustom.run(
+            JSON.stringify(inferRequiredVariables(cust.body_text ?? "", cust.title)),
+            cust.id,
+          );
         }
       });
       tx();
@@ -977,10 +1116,14 @@ const migrations: Migration[] = [
     name: "source_section_keys",
     up: () => {
       db.exec("ALTER TABLE sources ADD COLUMN section_key TEXT;");
-      db.run("UPDATE sources SET section_key = substr(label, 11) WHERE section_key IS NULL AND label LIKE '__section:%'");
-      const sources = db.query<{ id: number; meeting_id: number; label: string | null }, []>(
-        "SELECT id, meeting_id, label FROM sources WHERE section_key IS NULL AND label IS NOT NULL AND label NOT LIKE '__section:%'",
-      ).all();
+      db.run(
+        "UPDATE sources SET section_key = substr(label, 11) WHERE section_key IS NULL AND label LIKE '__section:%'",
+      );
+      const sources = db
+        .query<{ id: number; meeting_id: number; label: string | null }, []>(
+          "SELECT id, meeting_id, label FROM sources WHERE section_key IS NULL AND label IS NOT NULL AND label NOT LIKE '__section:%'",
+        )
+        .all();
       const sections = db.query<{ section_key: string; required_sources_json: string }, [number]>(
         "SELECT section_key, required_sources_json FROM section_drafts WHERE meeting_id = ?",
       );
@@ -1005,20 +1148,28 @@ const migrations: Migration[] = [
     id: 23,
     name: "refresh_templates_pronoun_variables",
     up: async () => {
-      const templates = db.query<{
-        id: number;
-        docx_path: string;
-        parsed_json: string;
-      }, []>("SELECT id, docx_path, parsed_json FROM meeting_templates").all();
-      const existingStmt = db.query<{
-        id: number;
-        meeting_id: number;
-        section_key: string;
-        content_md: string;
-        template_body_text: string;
-        status: string;
-        last_ai_provider: string | null;
-      }, [number]>(
+      const templates = db
+        .query<
+          {
+            id: number;
+            docx_path: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, docx_path, parsed_json FROM meeting_templates")
+        .all();
+      const existingStmt = db.query<
+        {
+          id: number;
+          meeting_id: number;
+          section_key: string;
+          content_md: string;
+          template_body_text: string;
+          status: string;
+          last_ai_provider: string | null;
+        },
+        [number]
+      >(
         "SELECT id, meeting_id, section_key, content_md, template_body_text, status, last_ai_provider FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal ASC",
       );
       const updateExisting = db.prepare(
@@ -1039,9 +1190,9 @@ const migrations: Migration[] = [
           JSON.stringify(parsed),
           template.id,
         ]);
-        const meetings = db.query<{ id: number }, [number]>(
-          "SELECT id FROM meetings WHERE template_id = ?",
-        ).all(template.id);
+        const meetings = db
+          .query<{ id: number }, [number]>("SELECT id FROM meetings WHERE template_id = ?")
+          .all(template.id);
         const tx = db.transaction(() => {
           for (const meeting of meetings) {
             const rows = existingStmt.all(meeting.id);
@@ -1050,7 +1201,8 @@ const migrations: Migration[] = [
               const existing = byKey.get(section.key);
               if (!existing) continue;
               const oldSection = oldParsed.sections.find((s) => s.key === section.key);
-              const canReplaceContent = !existing.content_md ||
+              const canReplaceContent =
+                !existing.content_md ||
                 existing.content_md === oldSection?.bodyText ||
                 existing.content_md === existing.template_body_text ||
                 (existing.status === "pending" && !existing.last_ai_provider);
@@ -1079,12 +1231,22 @@ const migrations: Migration[] = [
       `);
       db.run("UPDATE users SET updated_at = COALESCE(updated_at, created_at, datetime('now'))");
       const linkUser = (candidates: string[], email: string, role: string) => {
-        const target = db.query<{ id: number }, [string]>("SELECT id FROM users WHERE lower(email) = ?").get(email);
-        const source = target ?? db.query<{ id: number }, string[]>(
-          `SELECT id FROM users WHERE lower(email) IN (${candidates.map(() => "?").join(",")}) ORDER BY id LIMIT 1`,
-        ).get(...candidates);
+        const target = db
+          .query<{ id: number }, [string]>("SELECT id FROM users WHERE lower(email) = ?")
+          .get(email);
+        const source =
+          target ??
+          db
+            .query<{ id: number }, string[]>(
+              `SELECT id FROM users WHERE lower(email) IN (${candidates.map(() => "?").join(",")}) ORDER BY id LIMIT 1`,
+            )
+            .get(...candidates);
         if (!source) return;
-        db.run("UPDATE users SET email = ?, role = ?, updated_at = datetime('now') WHERE id = ?", [email, role, source.id]);
+        db.run("UPDATE users SET email = ?, role = ?, updated_at = datetime('now') WHERE id = ?", [
+          email,
+          role,
+          source.id,
+        ]);
       };
       linkUser(["admin", "udgam", "udgam@jkp.org.in"], "udgam@jkp.org.in", "super_admin");
       linkUser(["dalpana", "dalpana@jkp.org.in"], "dalpana@jkp.org.in", "admin");
@@ -1095,7 +1257,9 @@ const migrations: Migration[] = [
     name: "google_oauth_user_binding",
     up: () => {
       db.exec("ALTER TABLE users ADD COLUMN google_sub TEXT;");
-      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL;");
+      db.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL;",
+      );
     },
   },
   {
@@ -1119,14 +1283,23 @@ const migrations: Migration[] = [
           PRIMARY KEY(user_id, section_key)
         );
       `);
-      const strip = (prompt: string) => prompt
-        .replace(/\n*Current source material for this run \(authoritative\):[\s\S]*?(?:\n\nUse the current source material above when updating the section\.?|$)/g, "")
-        .replace(/\n*Sources:\n--- source [\s\S]*?(?=\nPlaceholders to fill \(leave as-is if no data\):|\n\nReplace each <placeholder>|\n\nReturn the rewritten section body only|$)/g, "\n")
-        .replace(/\n*Sources: \(none provided\)\n*/g, "\n")
-        .trim();
-      const rows = db.query<{ user_id: number; section_key: string; prompt: string }, []>(
-        "SELECT user_id, section_key, prompt FROM section_prompt_overrides ORDER BY updated_at ASC, created_at ASC",
-      ).all();
+      const strip = (prompt: string) =>
+        prompt
+          .replace(
+            /\n*Current source material for this run \(authoritative\):[\s\S]*?(?:\n\nUse the current source material above when updating the section\.?|$)/g,
+            "",
+          )
+          .replace(
+            /\n*Sources:\n--- source [\s\S]*?(?=\nPlaceholders to fill \(leave as-is if no data\):|\n\nReplace each <placeholder>|\n\nReturn the rewritten section body only|$)/g,
+            "\n",
+          )
+          .replace(/\n*Sources: \(none provided\)\n*/g, "\n")
+          .trim();
+      const rows = db
+        .query<{ user_id: number; section_key: string; prompt: string }, []>(
+          "SELECT user_id, section_key, prompt FROM section_prompt_overrides ORDER BY updated_at ASC, created_at ASC",
+        )
+        .all();
       const upsert = db.prepare(
         `INSERT INTO user_section_prompt_templates (user_id, section_key, prompt, updated_at)
          VALUES (?, ?, ?, datetime('now'))
@@ -1153,9 +1326,9 @@ const migrations: Migration[] = [
     id: 29,
     name: "meeting_template_titles_and_flexible_meeting",
     up: () => {
-      const org = db.query<{ id: number }, [string]>(
-        "SELECT id FROM organizations WHERE slug = ?",
-      ).get("jkp");
+      const org = db
+        .query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?")
+        .get("jkp");
       if (!org) return;
       for (const [slug, title] of Object.entries(MEETING_TEMPLATE_TITLES)) {
         db.run("UPDATE meeting_templates SET title = ? WHERE organization_id = ? AND slug = ?", [
@@ -1164,21 +1337,23 @@ const migrations: Migration[] = [
           slug,
         ]);
       }
-      const base = db.query<{ docx_path: string; parsed_json: string }, [number, string]>(
-        "SELECT docx_path, parsed_json FROM meeting_templates WHERE organization_id = ? AND slug = ?",
-      ).get(org.id, "meeting-1");
+      const base = db
+        .query<{ docx_path: string; parsed_json: string }, [number, string]>(
+          "SELECT docx_path, parsed_json FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+        )
+        .get(org.id, "meeting-1");
       if (!base) return;
       const parsed = buildFlexibleMeetingTemplate(JSON.parse(base.parsed_json) as ParsedTemplate);
-      const existing = db.query<{ id: number }, [number, string]>(
-        "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
-      ).get(org.id, "flexible-meeting");
+      const existing = db
+        .query<{ id: number }, [number, string]>(
+          "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+        )
+        .get(org.id, "flexible-meeting");
       if (existing) {
-        db.run("UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?", [
-          parsed.title,
-          base.docx_path,
-          JSON.stringify(parsed),
-          existing.id,
-        ]);
+        db.run(
+          "UPDATE meeting_templates SET title = ?, docx_path = ?, parsed_json = ? WHERE id = ?",
+          [parsed.title, base.docx_path, JSON.stringify(parsed), existing.id],
+        );
       } else {
         db.run(
           `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
@@ -1249,15 +1424,18 @@ const migrations: Migration[] = [
         ALTER TABLE meetings ADD COLUMN meeting_structure_id INTEGER REFERENCES meeting_structures(id) ON DELETE SET NULL;
       `);
 
-      const templates = db.query<{
-        id: number;
-        organization_id: number;
-        slug: string;
-        title: string;
-        parsed_json: string;
-      }, []>(
-        "SELECT id, organization_id, slug, title, parsed_json FROM meeting_templates ORDER BY id",
-      ).all();
+      const templates = db
+        .query<
+          {
+            id: number;
+            organization_id: number;
+            slug: string;
+            title: string;
+            parsed_json: string;
+          },
+          []
+        >("SELECT id, organization_id, slug, title, parsed_json FROM meeting_templates ORDER BY id")
+        .all();
       const insertDefinition = db.prepare(
         `INSERT OR IGNORE INTO section_template_definitions
            (key, owner_organization_id, title, body_text, required_sources_json, required_variables_json, origin_template_id)
@@ -1300,15 +1478,143 @@ const migrations: Migration[] = [
         const structureId = Number(structure.lastInsertRowid);
         const parsed = JSON.parse(template.parsed_json) as ParsedTemplate;
         for (const [index, section] of parsed.sections.entries()) {
-          const definition = db.query<{ id: number }, [string]>(
-            "SELECT id FROM section_template_definitions WHERE key = ?",
-          ).get(section.key);
+          const definition = db
+            .query<{ id: number }, [string]>(
+              "SELECT id FROM section_template_definitions WHERE key = ?",
+            )
+            .get(section.key);
           if (definition) insertStructureSection.run(structureId, definition.id, index + 1);
         }
       }
     },
   },
+  {
+    id: 31,
+    name: "radha_govind_samiti_templates",
+    up: () => {
+      db.exec("ALTER TABLE meeting_structures ADD COLUMN meeting_body TEXT NOT NULL DEFAULT ''; ");
+      db.exec("ALTER TABLE meeting_structures ADD COLUMN is_annual INTEGER NOT NULL DEFAULT 0;");
+      db.run(
+        `INSERT INTO organizations (slug, name) VALUES ('rgs', 'Radha Govind Samiti')
+         ON CONFLICT(slug) DO UPDATE SET name = excluded.name`,
+      );
+      const organization = db
+        .query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?")
+        .get("rgs");
+      if (!organization) throw new Error("Unable to register Radha Govind Samiti");
 
+      const templateIds = new Map<string, number>();
+      for (const template of RGS_MEETING_TEMPLATES) {
+        const docxPath = resolve(process.cwd(), "templates", "rgs", template.document);
+        if (!existsSync(docxPath)) throw new Error(`RGS document layout missing: ${docxPath}`);
+        const parsed = buildRgsParsedTemplate(template);
+        db.run(
+          `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(organization_id, slug) DO UPDATE SET
+             title = excluded.title,
+             docx_path = excluded.docx_path,
+             parsed_json = excluded.parsed_json`,
+          [organization.id, template.slug, template.title, docxPath, JSON.stringify(parsed)],
+        );
+        const row = db
+          .query<{ id: number }, [number, string]>(
+            "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+          )
+          .get(organization.id, template.slug);
+        if (!row) throw new Error(`Unable to register RGS meeting template: ${template.slug}`);
+        templateIds.set(template.slug, row.id);
+      }
+
+      const sectionIds = new Map<string, number>();
+      for (const section of RGS_SECTIONS) {
+        const originTemplate = RGS_MEETING_TEMPLATES.find((template) =>
+          template.sectionKeys.includes(section.key),
+        );
+        db.run(
+          `INSERT INTO section_template_definitions
+             (key, owner_organization_id, title, body_text, required_sources_json, required_variables_json, origin_template_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET
+             owner_organization_id = excluded.owner_organization_id,
+             title = excluded.title,
+             body_text = excluded.body_text,
+             required_sources_json = excluded.required_sources_json,
+             required_variables_json = excluded.required_variables_json,
+             origin_template_id = excluded.origin_template_id,
+             updated_at = datetime('now')`,
+          [
+            section.key,
+            organization.id,
+            section.title,
+            section.bodyText,
+            JSON.stringify(
+              section.requiredSources ?? inferRequiredSources(section.title, section.bodyText),
+            ),
+            JSON.stringify(inferRequiredVariables(section.bodyText, section.title)),
+            originTemplate ? (templateIds.get(originTemplate.slug) ?? null) : null,
+          ],
+        );
+        const row = db
+          .query<{ id: number }, [string]>(
+            "SELECT id FROM section_template_definitions WHERE key = ?",
+          )
+          .get(section.key);
+        if (!row) throw new Error(`Unable to register RGS section template: ${section.key}`);
+        sectionIds.set(section.key, row.id);
+      }
+
+      for (const template of RGS_MEETING_TEMPLATES) {
+        const baseTemplateId = templateIds.get(template.slug);
+        if (!baseTemplateId) continue;
+        db.run(
+          `INSERT INTO meeting_structures
+             (organization_id, base_template_id, slug, name, description, is_default, is_active, meeting_body, is_annual)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(organization_id, slug) DO UPDATE SET
+             base_template_id = excluded.base_template_id,
+             name = excluded.name,
+             description = excluded.description,
+             is_default = excluded.is_default,
+             is_active = 1,
+             meeting_body = excluded.meeting_body,
+             is_annual = excluded.is_annual,
+             updated_at = datetime('now')`,
+          [
+            organization.id,
+            baseTemplateId,
+            template.slug,
+            template.title,
+            template.description,
+            template.slug === "first-meeting" ? 1 : 0,
+            template.meetingBody,
+            template.isAnnual ? 1 : 0,
+          ],
+        );
+        const structure = db
+          .query<{ id: number }, [number, string]>(
+            "SELECT id FROM meeting_structures WHERE organization_id = ? AND slug = ?",
+          )
+          .get(organization.id, template.slug);
+        if (!structure)
+          throw new Error(`Unable to register RGS meeting structure: ${template.slug}`);
+        const replaceSections = db.transaction(() => {
+          db.run("DELETE FROM meeting_structure_sections WHERE meeting_structure_id = ?", [
+            structure.id,
+          ]);
+          const insertSection = db.prepare(
+            "INSERT INTO meeting_structure_sections (meeting_structure_id, section_template_id, ordinal) VALUES (?, ?, ?)",
+          );
+          template.sectionKeys.forEach((key, index) => {
+            const sectionId = sectionIds.get(key);
+            if (!sectionId) throw new Error(`RGS meeting structure section missing: ${key}`);
+            insertSection.run(structure.id, sectionId, index + 1);
+          });
+        });
+        replaceSections();
+      }
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {
@@ -1319,7 +1625,10 @@ export async function runMigrations(): Promise<void> {
   );`);
 
   const applied = new Set(
-    db.query<{ id: number }, []>("SELECT id FROM _migrations").all().map((r) => r.id),
+    db
+      .query<{ id: number }, []>("SELECT id FROM _migrations")
+      .all()
+      .map((r) => r.id),
   );
 
   for (const m of migrations) {

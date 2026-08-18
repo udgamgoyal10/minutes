@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, FilePlus, Loader2, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FilePlus,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import {
   useCreateSection,
   useCreateSectionTemplate,
@@ -59,9 +72,16 @@ export function SectionPage() {
 
   const sections = sectionsQ.data?.sections ?? [];
   const meeting = meetingQ.data?.meeting;
-  const templateOrganizationId = templatesQ.data?.templates.find((template) => template.id === meeting?.template_id)?.organization_id;
-  const hasIntro = sections.some((s) => s.section_key === "introduction");
-  const section = useMemo(() => sections.find((s) => s.section_key === sectionKey), [sections, sectionKey]);
+  const templateOrganizationId = templatesQ.data?.templates.find(
+    (template) => template.id === meeting?.template_id,
+  )?.organization_id;
+  const hasIntro = sections.some(
+    (s) => s.section_key === "introduction" || s.section_key.endsWith("-introduction"),
+  );
+  const section = useMemo(
+    () => sections.find((s) => s.section_key === sectionKey),
+    [sections, sectionKey],
+  );
   const idx = sections.findIndex((s) => s.section_key === sectionKey);
   const next = idx >= 0 && idx < sections.length - 1 ? sections[idx + 1] : null;
 
@@ -72,7 +92,9 @@ export function SectionPage() {
   const [showPrompt, setShowPrompt] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [promptDirty, setPromptDirty] = useState(false);
-  const [autosaveState, setAutosaveState] = useState<"saved" | "idle" | "saving" | "error">("saved");
+  const [autosaveState, setAutosaveState] = useState<"saved" | "idle" | "saving" | "error">(
+    "saved",
+  );
   const [autosaveError, setAutosaveError] = useState("");
   const latestContentRef = useRef("");
   const lastSavedRef = useRef({ key: "", content: "" });
@@ -244,7 +266,11 @@ export function SectionPage() {
                     isActive ? "text-brand-700" : "text-slate-700"
                   }`}
                 >
-                  <span className="text-xs text-slate-400 mr-2">{s.section_key === "introduction" ? "" : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}</span>
+                  <span className="text-xs text-slate-400 mr-2">
+                    {s.section_key === "introduction" || s.section_key.endsWith("-introduction")
+                      ? ""
+                      : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}
+                  </span>
                   <span>{s.title}</span>
                   <StatusPill status={s.status} />
                   {pendingKeys[s.section_key] && (
@@ -386,7 +412,8 @@ export function SectionPage() {
             {autosaveState === "saving" && "Autosaving…"}
             {autosaveState === "idle" && "Unsaved changes will autosave shortly."}
             {autosaveState === "saved" && "All section edits saved."}
-            {autosaveState === "error" && `Autosave failed: ${autosaveError || "please use Save draft"}`}
+            {autosaveState === "error" &&
+              `Autosave failed: ${autosaveError || "please use Save draft"}`}
           </div>
 
           <div className="mt-4 bg-white border border-slate-200 rounded-lg p-4 space-y-3">
@@ -395,7 +422,8 @@ export function SectionPage() {
             </p>
             {section.mode === "template" && (
               <p className="text-xs text-slate-500">
-                Template mode: AI keeps the template wording exact and only fills <span className="font-mono">&lt;placeholders&gt;</span> using uploaded sources.
+                Template mode: AI keeps the template wording exact and only fills{" "}
+                <span className="font-mono">&lt;placeholders&gt;</span> using uploaded sources.
                 Switch to "AI update allowed" if you want the AI to rewrite the section.
               </p>
             )}
@@ -414,8 +442,14 @@ export function SectionPage() {
                 className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
                 <span className="flex items-center gap-1">
-                  {showPrompt ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                  {promptDirty ? "Edited prompt (sent to AI)" : "Reusable prompt for this section template"}
+                  {showPrompt ? (
+                    <ChevronDown className="size-4" />
+                  ) : (
+                    <ChevronRight className="size-4" />
+                  )}
+                  {promptDirty
+                    ? "Edited prompt (sent to AI)"
+                    : "Reusable prompt for this section template"}
                 </span>
                 {promptDirty && (
                   <span className="text-[10px] uppercase tracking-wide bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
@@ -426,8 +460,9 @@ export function SectionPage() {
               {showPrompt && (
                 <div className="px-3 pb-3 space-y-2">
                   <p className="text-[11px] text-slate-500">
-                    This prompt is saved for this section template and your user account, so future meetings using this section will reuse it.
-                    Source-file text is added separately only for the current AI run. By default the AI only changes the
+                    This prompt is saved for this section template and your user account, so future
+                    meetings using this section will reuse it. Source-file text is added separately
+                    only for the current AI run. By default the AI only changes the
                     <span className="font-mono"> &lt;…&gt; </span> placeholder locations.
                   </p>
                   <textarea
@@ -462,7 +497,8 @@ export function SectionPage() {
                       disabled={resetPrompt.isPending}
                       className="text-xs text-brand-700 hover:underline flex items-center gap-1 disabled:opacity-50"
                     >
-                      <RotateCcw className="size-3.5" /> {resetPrompt.isPending ? "Resetting…" : "Reset to generated default"}
+                      <RotateCcw className="size-3.5" />{" "}
+                      {resetPrompt.isPending ? "Resetting…" : "Reset to generated default"}
                     </button>
                     {promptQ.data?.saved_prompt && (
                       <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
@@ -493,7 +529,8 @@ export function SectionPage() {
                   <option value="">(provider)</option>
                   {(providersQ.data?.providers ?? []).map((p) => (
                     <option key={p.id} value={p.id} disabled={!p.configured}>
-                      {p.id}{p.configured ? "" : " (needs API key)"}
+                      {p.id}
+                      {p.configured ? "" : " (needs API key)"}
                     </option>
                   ))}
                 </select>
@@ -506,13 +543,19 @@ export function SectionPage() {
                       ? "border-yellow-400 bg-yellow-100 text-yellow-900"
                       : "border-slate-300"
                   }`}
-                  title={isEnterpriseProvider ? "Cloud model — data may leave the premises" : "Model for this section"}
+                  title={
+                    isEnterpriseProvider
+                      ? "Cloud model — data may leave the premises"
+                      : "Model for this section"
+                  }
                 >
-                  {(providersQ.data?.providers.find((p) => p.id === provider)?.models ?? []).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
+                  {(providersQ.data?.providers.find((p) => p.id === provider)?.models ?? []).map(
+                    (m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ),
+                  )}
                 </select>
                 <span className={isEnterpriseProvider ? "text-yellow-700" : "text-slate-400"}>
                   {isEnterpriseProvider ? "data may leave premises" : "defaults from Setup"}
@@ -534,7 +577,11 @@ export function SectionPage() {
                   title="Replace current text with the original template wording"
                   className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
                 >
-                  {revert.isPending ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                  {revert.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <RotateCcw className="size-4" />
+                  )}
                   Revert to template
                 </button>
                 <button
@@ -580,7 +627,11 @@ export function SectionPage() {
                   }}
                   className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 flex items-center gap-1"
                 >
-                  {pendingKeys[section.section_key] ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  {pendingKeys[section.section_key] ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-4" />
+                  )}
                   Generate
                 </button>
               </div>
@@ -609,10 +660,12 @@ export function SectionPage() {
               </button>
               <button
                 onClick={async () => {
-                  const title = window.prompt(
-                    "Save the current text as a reusable section template. Template name:",
-                    section.title,
-                  )?.trim();
+                  const title = window
+                    .prompt(
+                      "Save the current text as a reusable section template. Template name:",
+                      section.title,
+                    )
+                    ?.trim();
                   if (!title) return;
                   await createTemplate.mutateAsync({
                     title,
@@ -620,12 +673,18 @@ export function SectionPage() {
                     required_sources: section.required_sources,
                     required_variables: section.required_variables,
                   });
-                  window.alert("Saved to \u201cMy templates\u201d. Add it any time from \u201cAdd section\u201d.");
+                  window.alert(
+                    "Saved to \u201cMy templates\u201d. Add it any time from \u201cAdd section\u201d.",
+                  );
                 }}
                 disabled={createTemplate.isPending}
                 className="text-sm text-slate-700 hover:text-brand-700 flex items-center gap-1"
               >
-                {createTemplate.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                {createTemplate.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
                 Save as template
               </button>
             </div>

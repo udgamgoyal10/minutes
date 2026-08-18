@@ -8,12 +8,24 @@ export function NewMeetingPage() {
   const navigate = useNavigate();
   const [organizationId, setOrganizationId] = useState<number | null>(null);
   const structuresQ = useMeetingStructures(organizationId);
+  const [meetingBody, setMeetingBody] = useState("");
   const [structureId, setStructureId] = useState<number | null>(null);
   const [label, setLabel] = useState("");
   const organizations = organizationsQ.data?.organizations ?? [];
   const structures = useMemo(
     () => (structuresQ.data?.structures ?? []).filter((structure) => structure.is_active),
     [structuresQ.data?.structures],
+  );
+  const meetingBodies = useMemo(
+    () => [...new Set(structures.map((structure) => structure.meeting_body).filter(Boolean))],
+    [structures],
+  );
+  const availableStructures = useMemo(
+    () =>
+      meetingBodies.length
+        ? structures.filter((structure) => structure.meeting_body === meetingBody)
+        : structures,
+    [meetingBodies.length, meetingBody, structures],
   );
 
   useEffect(() => {
@@ -22,13 +34,27 @@ export function NewMeetingPage() {
   }, [organizationId, organizations]);
 
   useEffect(() => {
-    if (structures.length === 0) {
+    if (meetingBodies.length === 0) {
+      setMeetingBody("");
+      return;
+    }
+    if (meetingBodies.includes(meetingBody)) return;
+    const defaultBody = structures.find((structure) => structure.is_default)?.meeting_body;
+    setMeetingBody(
+      defaultBody && meetingBodies.includes(defaultBody) ? defaultBody : meetingBodies[0]!,
+    );
+  }, [meetingBodies, meetingBody, structures]);
+
+  useEffect(() => {
+    if (availableStructures.length === 0) {
       setStructureId(null);
       return;
     }
-    if (structures.some((structure) => structure.id === structureId)) return;
-    setStructureId((structures.find((structure) => structure.is_default) ?? structures[0])!.id);
-  }, [structureId, structures]);
+    if (availableStructures.some((structure) => structure.id === structureId)) return;
+    setStructureId(
+      (availableStructures.find((structure) => structure.is_default) ?? availableStructures[0])!.id,
+    );
+  }, [availableStructures, structureId]);
 
   return (
     <div className="max-w-xl">
@@ -48,6 +74,7 @@ export function NewMeetingPage() {
             value={organizationId ?? ""}
             onChange={(e) => {
               setOrganizationId(Number(e.target.value) || null);
+              setMeetingBody("");
               setStructureId(null);
             }}
             className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
@@ -56,26 +83,60 @@ export function NewMeetingPage() {
             <option value="">— select organization —</option>
             {organizationsQ.isLoading && <option>Loading…</option>}
             {organizations.map((organization) => (
-              <option key={organization.id} value={organization.id}>{organization.name}</option>
+              <option key={organization.id} value={organization.id}>
+                {organization.name}
+              </option>
             ))}
           </select>
         </label>
+        {meetingBodies.length > 0 && (
+          <label className="block">
+            <span className="text-sm font-medium text-slate-700">Meeting body</span>
+            <select
+              value={meetingBody}
+              onChange={(e) => {
+                setMeetingBody(e.target.value);
+                setStructureId(null);
+              }}
+              disabled={!organizationId || structuresQ.isLoading}
+              className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm disabled:bg-slate-50"
+              required
+            >
+              <option value="">— select meeting body —</option>
+              {meetingBodies.map((body) => (
+                <option key={body} value={body}>
+                  {body}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="block">
-          <span className="text-sm font-medium text-slate-700">Meeting type</span>
+          <span className="text-sm font-medium text-slate-700">
+            {meetingBodies.length ? "Meeting template" : "Meeting type"}
+          </span>
           <select
             value={structureId ?? ""}
             onChange={(e) => setStructureId(Number(e.target.value) || null)}
-            disabled={!organizationId || structuresQ.isLoading}
+            disabled={
+              !organizationId || structuresQ.isLoading || (meetingBodies.length > 0 && !meetingBody)
+            }
             className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm disabled:bg-slate-50"
             required
           >
-            <option value="">— select meeting type —</option>
-            {structures.map((structure) => (
-              <option key={structure.id} value={structure.id}>{structure.name}</option>
+            <option value="">
+              — select {meetingBodies.length ? "meeting template" : "meeting type"} —
+            </option>
+            {availableStructures.map((structure) => (
+              <option key={structure.id} value={structure.id}>
+                {structure.name}
+              </option>
             ))}
           </select>
           {organizationId && !structuresQ.isLoading && structures.length === 0 && (
-            <span className="mt-1 block text-xs text-amber-700">No active meeting types are configured for this organization.</span>
+            <span className="mt-1 block text-xs text-amber-700">
+              No active meeting types are configured for this organization.
+            </span>
           )}
         </label>
         <label className="block">

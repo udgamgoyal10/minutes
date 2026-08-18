@@ -29,31 +29,53 @@ const GENDER_ROLES = [
   {
     baseToken: "trustee-1",
     genderToken: "managing-trustee-gender",
-    pronounTokens: ["managing-trustee-subject-pronoun", "managing-trustee-object-pronoun", "managing-trustee-possessive-pronoun"],
+    pronounTokens: [
+      "managing-trustee-subject-pronoun",
+      "managing-trustee-object-pronoun",
+      "managing-trustee-possessive-pronoun",
+    ],
   },
   {
     baseToken: "secretary",
     genderToken: "secretary-gender",
-    pronounTokens: ["secretary-subject-pronoun", "secretary-object-pronoun", "secretary-possessive-pronoun"],
+    pronounTokens: [
+      "secretary-subject-pronoun",
+      "secretary-object-pronoun",
+      "secretary-possessive-pronoun",
+    ],
   },
   {
     baseToken: "treasurer",
     genderToken: "treasurer-gender",
-    pronounTokens: ["treasurer-subject-pronoun", "treasurer-object-pronoun", "treasurer-possessive-pronoun"],
+    pronounTokens: [
+      "treasurer-subject-pronoun",
+      "treasurer-object-pronoun",
+      "treasurer-possessive-pronoun",
+    ],
   },
   {
     baseToken: "income-tax-representative",
     genderToken: "income-tax-representative-gender",
-    pronounTokens: ["income-tax-representative-subject-pronoun", "income-tax-representative-object-pronoun", "income-tax-representative-possessive-pronoun"],
+    pronounTokens: [
+      "income-tax-representative-subject-pronoun",
+      "income-tax-representative-object-pronoun",
+      "income-tax-representative-possessive-pronoun",
+    ],
   },
   {
     baseToken: "medical-superintendent-of-jkc-mangarh",
     genderToken: "medical-superintendent-gender",
-    pronounTokens: ["medical-superintendent-subject-pronoun", "medical-superintendent-object-pronoun", "medical-superintendent-possessive-pronoun"],
+    pronounTokens: [
+      "medical-superintendent-subject-pronoun",
+      "medical-superintendent-object-pronoun",
+      "medical-superintendent-possessive-pronoun",
+    ],
   },
 ];
 
-const GENDER_METADATA_TOKENS = new Set(GENDER_ROLES.flatMap((role) => [role.genderToken, ...role.pronounTokens]));
+const GENDER_METADATA_TOKENS = new Set(
+  GENDER_ROLES.flatMap((role) => [role.genderToken, ...role.pronounTokens]),
+);
 const GENDER_ROLE_BY_BASE_TOKEN = new Map(GENDER_ROLES.map((role) => [role.baseToken, role]));
 
 function isGenderMetadataToken(token: string): boolean {
@@ -68,7 +90,7 @@ export function SetupPage() {
   const templatesQ = useTemplates();
   const providersQ = useProviders();
   const sectionsQ = useSections(meetingId);
-  const templateVariablesQ = useTemplateVariables();
+  const templateVariablesQ = useTemplateVariables(meetingQ.data?.meeting.organization_id);
   const update = useUpdateMeeting(meetingId);
   const createSection = useCreateSection(meetingId);
   const deleteSection = useDeleteSection(meetingId);
@@ -107,7 +129,8 @@ export function SetupPage() {
     if (!model || !selected.models.includes(model)) setModel(selected.models[0] ?? "");
   }, [providersQ.data?.providers, provider, model]);
 
-  const placeholders = templateVariablesQ.data?.variables ?? template?.parsed.globalPlaceholders ?? [];
+  const placeholders =
+    templateVariablesQ.data?.variables ?? template?.parsed.globalPlaceholders ?? [];
 
   // Tokens that map a "date" placeholder to the derived day/month/year tokens
   // the template actually contains. If any of the derived tokens are used by a
@@ -142,7 +165,10 @@ export function SetupPage() {
   const requiredGenderByBaseToken = useMemo(() => {
     const map = new Map<string, string>();
     for (const role of GENDER_ROLES) {
-      if (usedTokens.has(role.genderToken) || role.pronounTokens.some((token) => usedTokens.has(token))) {
+      if (
+        usedTokens.has(role.genderToken) ||
+        role.pronounTokens.some((token) => usedTokens.has(token))
+      ) {
         map.set(role.baseToken, role.genderToken);
       }
     }
@@ -163,7 +189,9 @@ export function SetupPage() {
   const savedValues = variableValuesQ.data?.values ?? {};
   const savedGenders = variableValuesQ.data?.genders ?? {};
   const selectedSections = sectionsQ.data?.sections ?? [];
-  const hasIntro = selectedSections.some((s) => s.section_key === "introduction");
+  const hasIntro = selectedSections.some(
+    (s) => s.section_key === "introduction" || s.section_key.endsWith("-introduction"),
+  );
 
   return (
     <div>
@@ -187,7 +215,7 @@ export function SetupPage() {
         <span className="text-sm">
           <span className="font-medium text-slate-800">Annual meeting (adoption of accounts)</span>
           <span className="block text-slate-500">
-            When on, the introduction opens with “Minutes of the Annual Meeting of the Board of Trustees …”.
+            When on, the introduction uses the annual-meeting wording for the selected organization.
           </span>
         </span>
       </label>
@@ -221,7 +249,7 @@ export function SetupPage() {
               value={vars[p.token] ?? ""}
               savedValues={savedValues[p.token] ?? []}
               savedGenders={savedGenders[p.token] ?? {}}
-              gender={genderToken ? vars[genderToken] ?? "" : undefined}
+              gender={genderToken ? (vars[genderToken] ?? "") : undefined}
               genderToken={genderToken}
               onChange={(v, storedGender) => {
                 setVars((prev) => {
@@ -230,7 +258,11 @@ export function SetupPage() {
                   return next;
                 });
               }}
-              onChangeGender={genderToken ? (gender) => setVars((prev) => ({ ...prev, [genderToken]: gender })) : undefined}
+              onChangeGender={
+                genderToken
+                  ? (gender) => setVars((prev) => ({ ...prev, [genderToken]: gender }))
+                  : undefined
+              }
             />
           );
         })}
@@ -245,8 +277,9 @@ export function SetupPage() {
 
       <h2 className="text-lg font-medium mt-8 mb-3">Sections</h2>
       <p className="text-sm text-slate-500 mb-3">
-        The meeting starts with every section from <span className="font-medium">{template?.title ?? "the template"}</span>.
-        Remove ones you don’t need, or add more from any template before moving to the editor.
+        The meeting starts with every section from{" "}
+        <span className="font-medium">{template?.title ?? "the template"}</span>. Remove ones you
+        don’t need, or add more from any template before moving to the editor.
       </p>
       <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
         {selectedSections.length === 0 && (
@@ -256,7 +289,11 @@ export function SetupPage() {
           <div key={s.section_key} className="flex items-start gap-3 px-4 py-2.5">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-400">{s.section_key === "introduction" ? "" : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}</span>
+                <span className="text-xs text-slate-400">
+                  {s.section_key === "introduction" || s.section_key.endsWith("-introduction")
+                    ? ""
+                    : `${hasIntro ? s.ordinal - 1 : s.ordinal}.`}
+                </span>
                 <span className="text-sm font-medium text-slate-900">{s.title}</span>
               </div>
               {s.required_sources.length > 0 && (
@@ -345,7 +382,11 @@ export function SetupPage() {
               .filter((p) => p.kind !== "date")
               .map((p) => {
                 const genderToken = requiredGenderByBaseToken.get(p.token);
-                return { token: p.token, value: (vars[p.token] ?? "").trim(), gender: genderToken ? vars[genderToken] : undefined };
+                return {
+                  token: p.token,
+                  value: (vars[p.token] ?? "").trim(),
+                  gender: genderToken ? vars[genderToken] : undefined,
+                };
               })
               .filter((e) => e.value.length > 0);
             if (entries.length) await saveVariableValues.mutateAsync(entries).catch(() => {});
@@ -360,7 +401,6 @@ export function SetupPage() {
     </div>
   );
 }
-
 
 function TemplateVariableManager({
   open,
@@ -380,7 +420,9 @@ function TemplateVariableManager({
   const deleteVariable = useDeleteTemplateVariable();
   const updateValue = useUpdateVariableValue();
   const deleteValue = useDeleteVariableValue();
-  const variables = (variablesQ.data?.variables ?? []).filter((v) => !isGenderMetadataToken(v.token));
+  const variables = (variablesQ.data?.variables ?? []).filter(
+    (v) => !isGenderMetadataToken(v.token),
+  );
   const sections = sectionsQ.data?.sections ?? [];
   const [editing, setEditing] = useState<Placeholder | "new" | null>(null);
   const [raw, setRaw] = useState("");
@@ -393,7 +435,7 @@ function TemplateVariableManager({
   if (!open) return null;
 
   const currentToken = editing && editing !== "new" ? editing.token : "";
-  const currentValues = currentToken ? savedValues[currentToken] ?? [] : [];
+  const currentValues = currentToken ? (savedValues[currentToken] ?? []) : [];
   const currentSupportsGender = GENDER_ROLE_BY_BASE_TOKEN.has(currentToken);
   const busy = createVariable.isPending || updateVariable.isPending || deleteVariable.isPending;
 
@@ -410,8 +452,17 @@ function TemplateVariableManager({
       setRaw(v.raw);
       setKind(v.kind === "date" ? "date" : "text");
       setSelected(new Set(v.section_keys ?? []));
-      setValueEdits(Object.fromEntries((savedValues[v.token] ?? []).map((value) => [value, value])));
-      setValueGenderEdits(Object.fromEntries((savedValues[v.token] ?? []).map((value) => [value, savedGenders[v.token]?.[value] ?? ""])));
+      setValueEdits(
+        Object.fromEntries((savedValues[v.token] ?? []).map((value) => [value, value])),
+      );
+      setValueGenderEdits(
+        Object.fromEntries(
+          (savedValues[v.token] ?? []).map((value) => [
+            value,
+            savedGenders[v.token]?.[value] ?? "",
+          ]),
+        ),
+      );
     }
   }
 
@@ -426,7 +477,12 @@ function TemplateVariableManager({
 
   async function deleteCurrentVariable() {
     if (!editing || editing === "new") return;
-    if (!confirm(`Delete template variable "${editing.raw}"? This will also delete its stored values.`)) return;
+    if (
+      !confirm(
+        `Delete template variable "${editing.raw}"? This will also delete its stored values.`,
+      )
+    )
+      return;
     try {
       await deleteVariable.mutateAsync(editing.token);
       setEditing(null);
@@ -447,7 +503,8 @@ function TemplateVariableManager({
     }
     try {
       if (editing === "new") await createVariable.mutateAsync({ raw, kind, section_keys });
-      else if (editing) await updateVariable.mutateAsync({ token: editing.token, raw, kind, section_keys });
+      else if (editing)
+        await updateVariable.mutateAsync({ token: editing.token, raw, kind, section_keys });
       setEditing(null);
     } catch (err) {
       setError((err as Error).message);
@@ -459,7 +516,11 @@ function TemplateVariableManager({
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <h2 className="text-lg font-semibold">Manage template variables</h2>
-          <button onClick={onClose} className="p-1 rounded-md text-slate-500 hover:bg-slate-100" aria-label="Close">
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md text-slate-500 hover:bg-slate-100"
+            aria-label="Close"
+          >
             <X className="size-5" />
           </button>
         </div>
@@ -485,7 +546,11 @@ function TemplateVariableManager({
             ))}
           </aside>
           <main className="overflow-auto p-5 space-y-4">
-            {!editing && <p className="text-sm text-slate-500">Select a variable to edit it, or create a new one.</p>}
+            {!editing && (
+              <p className="text-sm text-slate-500">
+                Select a variable to edit it, or create a new one.
+              </p>
+            )}
             {editing && (
               <>
                 <div className="grid grid-cols-[1fr_10rem] gap-3">
@@ -511,11 +576,18 @@ function TemplateVariableManager({
                   </label>
                 </div>
                 <div>
-                  <span className="text-sm font-medium text-slate-700">Mapped section templates</span>
-                  <p className="text-xs text-slate-500 mb-2">At least one section template is required.</p>
+                  <span className="text-sm font-medium text-slate-700">
+                    Mapped section templates
+                  </span>
+                  <p className="text-xs text-slate-500 mb-2">
+                    At least one section template is required.
+                  </p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 max-h-56 overflow-auto border border-slate-200 rounded-md p-3">
                     {sections.map((s) => (
-                      <label key={`${s.template_slug}:${s.key}`} className="flex items-start gap-2 text-sm text-slate-700">
+                      <label
+                        key={`${s.template_slug}:${s.key}`}
+                        className="flex items-start gap-2 text-sm text-slate-700"
+                      >
                         <input
                           type="checkbox"
                           checked={selected.has(s.key)}
@@ -524,7 +596,9 @@ function TemplateVariableManager({
                         />
                         <span>
                           {s.title}
-                          <span className="block text-[10px] text-slate-400">{s.template_title}</span>
+                          <span className="block text-[10px] text-slate-400">
+                            {s.template_title}
+                          </span>
                         </span>
                       </label>
                     ))}
@@ -534,18 +608,27 @@ function TemplateVariableManager({
                   <div>
                     <span className="text-sm font-medium text-slate-700">Stored values</span>
                     <div className="mt-2 space-y-2">
-                      {currentValues.length === 0 && <p className="text-xs text-slate-500">No stored values yet.</p>}
+                      {currentValues.length === 0 && (
+                        <p className="text-xs text-slate-500">No stored values yet.</p>
+                      )}
                       {currentValues.map((value) => (
                         <div key={value} className="flex gap-2">
                           <input
                             value={valueEdits[value] ?? value}
-                            onChange={(e) => setValueEdits({ ...valueEdits, [value]: e.target.value })}
+                            onChange={(e) =>
+                              setValueEdits({ ...valueEdits, [value]: e.target.value })
+                            }
                             className="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm"
                           />
                           {currentSupportsGender && (
                             <select
                               value={valueGenderEdits[value] ?? ""}
-                              onChange={(e) => setValueGenderEdits({ ...valueGenderEdits, [value]: e.target.value })}
+                              onChange={(e) =>
+                                setValueGenderEdits({
+                                  ...valueGenderEdits,
+                                  [value]: e.target.value,
+                                })
+                              }
                               className="w-28 border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"
                             >
                               <option value="">Gender</option>
@@ -555,7 +638,16 @@ function TemplateVariableManager({
                           )}
                           <button
                             type="button"
-                            onClick={() => updateValue.mutate({ token: currentToken, old_value: value, value: valueEdits[value] ?? value, gender: currentSupportsGender ? valueGenderEdits[value] ?? "" : undefined })}
+                            onClick={() =>
+                              updateValue.mutate({
+                                token: currentToken,
+                                old_value: value,
+                                value: valueEdits[value] ?? value,
+                                gender: currentSupportsGender
+                                  ? (valueGenderEdits[value] ?? "")
+                                  : undefined,
+                              })
+                            }
                             className="text-xs border border-slate-300 rounded-md px-2 hover:bg-slate-50"
                           >
                             Save
@@ -587,17 +679,21 @@ function TemplateVariableManager({
                     )}
                   </div>
                   <div className="flex gap-2">
-                  <button type="button" onClick={() => setEditing(null)} className="text-sm text-slate-600 px-3 py-1.5">
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveVariable}
-                    disabled={busy}
-                    className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
-                  >
-                    Save variable
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(null)}
+                      className="text-sm text-slate-600 px-3 py-1.5"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveVariable}
+                      disabled={busy}
+                      className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+                    >
+                      Save variable
+                    </button>
                   </div>
                 </div>
               </>
@@ -699,18 +795,19 @@ function VariableField({
   const options = [...savedValues];
   if (value && !options.includes(value)) options.unshift(value);
 
-  const genderControl = genderToken && onChangeGender ? (
-    <select
-      value={gender ?? ""}
-      onChange={(e) => onChangeGender(e.target.value)}
-      className="mt-1 w-24 border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"
-      title="Gender for pronouns"
-    >
-      <option value="">Gender</option>
-      <option value="male">Male</option>
-      <option value="female">Female</option>
-    </select>
-  ) : null;
+  const genderControl =
+    genderToken && onChangeGender ? (
+      <select
+        value={gender ?? ""}
+        onChange={(e) => onChangeGender(e.target.value)}
+        className="mt-1 w-24 border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"
+        title="Gender for pronouns"
+      >
+        <option value="">Gender</option>
+        <option value="male">Male</option>
+        <option value="female">Female</option>
+      </select>
+    ) : null;
 
   return (
     <label className="block">
@@ -834,7 +931,8 @@ function ProviderPicker({
                     : "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
               }`}
             >
-              {p.id} <span className="text-xs ml-1">({p.configured ? p.category : "needs API key"})</span>
+              {p.id}{" "}
+              <span className="text-xs ml-1">({p.configured ? p.category : "needs API key"})</span>
             </button>
           );
         })}
@@ -846,7 +944,9 @@ function ProviderPicker({
             value={model}
             onChange={(e) => onChangeModel(e.target.value)}
             className={`mt-1 w-full border rounded-md px-3 py-2 text-sm ${
-              enterpriseSelected ? "border-yellow-400 bg-yellow-100 text-yellow-900" : "border-slate-300"
+              enterpriseSelected
+                ? "border-yellow-400 bg-yellow-100 text-yellow-900"
+                : "border-slate-300"
             }`}
           >
             {selected.models.map((m) => (
