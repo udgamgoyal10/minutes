@@ -52,6 +52,8 @@ export type Template = {
 
 export type Organization = { id: number; slug: string; name: string };
 
+export type MeetingType = "" | "annual" | "emergency" | "extraordinary";
+
 export type Meeting = {
   id: number;
   template_id: number;
@@ -63,6 +65,7 @@ export type Meeting = {
   meeting_date: string | null;
   previous_meeting_date: string | null;
   is_annual: boolean;
+  meeting_type: MeetingType;
   variables: Record<string, string>;
   ai_provider: string | null;
   ai_model: string | null;
@@ -293,6 +296,7 @@ export function useUpdateMeeting(id: number) {
         meeting_date: string;
         previous_meeting_date: string;
         is_annual: boolean;
+        meeting_type: MeetingType;
         variables: Record<string, string>;
         ai_provider: string;
         ai_model: string;

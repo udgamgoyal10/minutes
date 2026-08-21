@@ -400,6 +400,22 @@ export const RGS_MEETING_TEMPLATES: RgsMeetingTemplate[] = [
     ],
   },
   {
+    slug: "general-body-flexible-meeting",
+    title: "Flexible Meeting",
+    description:
+      "Flexible General Body meeting with the common investment, activity, and workshop sections.",
+    meetingBody: "General Body",
+    isAnnual: false,
+    document: "general-body.docx",
+    sectionKeys: [
+      "rgs-general-body-introduction",
+      "rgs-investment-chart",
+      "rgs-camps-and-workshops-sponsored",
+      "rgs-review-of-significant-activities",
+      "rgs-vote-of-thanks",
+    ],
+  },
+  {
     slug: "approval-of-accounts",
     title: "Approval of Accounts",
     description:

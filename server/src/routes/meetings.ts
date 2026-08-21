@@ -36,6 +36,7 @@ type MeetingRow = {
   meeting_date: string | null;
   previous_meeting_date: string | null;
   is_annual: number;
+  meeting_type: string;
   variables_json: string;
   ai_provider: string | null;
   ai_model: string | null;
@@ -924,9 +925,17 @@ r.post("/meetings", async (c) => {
   const tx = db.transaction(() => {
     const result = db.run(
       `INSERT INTO meetings
-         (template_id, organization_id, meeting_structure_id, user_id, label, is_annual, variables_json)
-       VALUES (?, ?, ?, ?, ?, ?, '{}')`,
-      [tpl.id, organizationId, structure?.id ?? null, user.id, label, structure?.is_annual ? 1 : 0],
+         (template_id, organization_id, meeting_structure_id, user_id, label, is_annual, meeting_type, variables_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '{}')`,
+      [
+        tpl.id,
+        organizationId,
+        structure?.id ?? null,
+        user.id,
+        label,
+        structure?.is_annual ? 1 : 0,
+        structure?.is_annual ? "annual" : "",
+      ],
     );
     meetingId = Number(result.lastInsertRowid);
     resolvedSections.forEach((section, index) => {
@@ -973,11 +982,17 @@ r.patch("/meetings/:id", async (c) => {
     meeting_date: string;
     previous_meeting_date: string;
     is_annual: boolean;
+    meeting_type: string;
     variables: Record<string, string>;
     ai_provider: string;
     ai_model: string;
     status: string;
   }>;
+  if (
+    body.meeting_type != null &&
+    !["", "annual", "emergency", "extraordinary"].includes(body.meeting_type)
+  )
+    return c.json({ error: "invalid meeting type" }, 400);
   const vars = body.variables
     ? JSON.stringify({
         ...(JSON.parse(m.variables_json) as Record<string, string>),
@@ -990,6 +1005,7 @@ r.patch("/meetings/:id", async (c) => {
       meeting_date = COALESCE(?, meeting_date),
       previous_meeting_date = COALESCE(?, previous_meeting_date),
       is_annual = COALESCE(?, is_annual),
+      meeting_type = COALESCE(?, meeting_type),
       variables_json = ?,
       ai_provider = COALESCE(?, ai_provider),
       ai_model = COALESCE(?, ai_model),
@@ -1001,6 +1017,7 @@ r.patch("/meetings/:id", async (c) => {
       body.meeting_date ?? null,
       body.previous_meeting_date ?? null,
       body.is_annual == null ? null : body.is_annual ? 1 : 0,
+      body.meeting_type ?? null,
       vars,
       body.ai_provider ?? null,
       body.ai_model ?? null,
@@ -1059,6 +1076,7 @@ function rowToMeeting(row: MeetingRow) {
     meeting_date: row.meeting_date,
     previous_meeting_date: row.previous_meeting_date,
     is_annual: !!row.is_annual,
+    meeting_type: row.meeting_type,
     variables: JSON.parse(row.variables_json) as Record<string, string>,
     ai_provider: row.ai_provider,
     ai_model: row.ai_model,

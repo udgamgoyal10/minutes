@@ -1615,6 +1615,93 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: 32,
+    name: "rgs_general_body_flexible_meeting_and_meeting_type",
+    up: () => {
+      db.exec("ALTER TABLE meetings ADD COLUMN meeting_type TEXT NOT NULL DEFAULT '';");
+      db.run(
+        `UPDATE meetings SET organization_id = (
+           SELECT organization_id FROM meeting_templates WHERE id = meetings.template_id
+         ) WHERE organization_id IS NULL`,
+      );
+      db.run(
+        `UPDATE meetings SET meeting_type = 'annual'
+         WHERE is_annual = 1
+           AND organization_id = (SELECT id FROM organizations WHERE slug = 'rgs')`,
+      );
+      const organization = db
+        .query<{ id: number }, [string]>("SELECT id FROM organizations WHERE slug = ?")
+        .get("rgs");
+      const template = RGS_MEETING_TEMPLATES.find(
+        (candidate) => candidate.slug === "general-body-flexible-meeting",
+      );
+      if (!organization || !template) return;
+      const docxPath = resolve(process.cwd(), "templates", "rgs", template.document);
+      if (!existsSync(docxPath)) throw new Error(`RGS document layout missing: ${docxPath}`);
+      const parsed = buildRgsParsedTemplate(template);
+      db.run(
+        `INSERT INTO meeting_templates (organization_id, slug, title, docx_path, parsed_json)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(organization_id, slug) DO UPDATE SET
+           title = excluded.title,
+           docx_path = excluded.docx_path,
+           parsed_json = excluded.parsed_json`,
+        [organization.id, template.slug, template.title, docxPath, JSON.stringify(parsed)],
+      );
+      const baseTemplate = db
+        .query<{ id: number }, [number, string]>(
+          "SELECT id FROM meeting_templates WHERE organization_id = ? AND slug = ?",
+        )
+        .get(organization.id, template.slug);
+      if (!baseTemplate) throw new Error("Unable to register RGS General Body flexible meeting");
+      db.run(
+        `INSERT INTO meeting_structures
+           (organization_id, base_template_id, slug, name, description, is_default, is_active, meeting_body, is_annual)
+         VALUES (?, ?, ?, ?, ?, 0, 1, ?, 0)
+         ON CONFLICT(organization_id, slug) DO UPDATE SET
+           base_template_id = excluded.base_template_id,
+           name = excluded.name,
+           description = excluded.description,
+           is_active = 1,
+           meeting_body = excluded.meeting_body,
+           is_annual = 0,
+           updated_at = datetime('now')`,
+        [
+          organization.id,
+          baseTemplate.id,
+          template.slug,
+          template.title,
+          template.description,
+          template.meetingBody,
+        ],
+      );
+      const structure = db
+        .query<{ id: number }, [number, string]>(
+          "SELECT id FROM meeting_structures WHERE organization_id = ? AND slug = ?",
+        )
+        .get(organization.id, template.slug);
+      if (!structure) throw new Error("Unable to register RGS General Body flexible structure");
+      const insertSection = db.prepare(
+        "INSERT INTO meeting_structure_sections (meeting_structure_id, section_template_id, ordinal) VALUES (?, ?, ?)",
+      );
+      const replaceSections = db.transaction(() => {
+        db.run("DELETE FROM meeting_structure_sections WHERE meeting_structure_id = ?", [
+          structure.id,
+        ]);
+        template.sectionKeys.forEach((key, index) => {
+          const section = db
+            .query<{ id: number }, [string]>(
+              "SELECT id FROM section_template_definitions WHERE key = ?",
+            )
+            .get(key);
+          if (!section) throw new Error(`RGS meeting structure section missing: ${key}`);
+          insertSection.run(structure.id, section.id, index + 1);
+        });
+      });
+      replaceSections();
+    },
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

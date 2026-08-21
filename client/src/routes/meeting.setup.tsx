@@ -5,6 +5,7 @@ import {
   useCreateSection,
   useDeleteSection,
   useMeeting,
+  useOrganizations,
   useProviders,
   useSaveVariableValues,
   useSections,
@@ -18,6 +19,7 @@ import {
   useDeleteTemplateVariable,
   useDeleteVariableValue,
   useVariableValues,
+  type MeetingType,
   type Placeholder,
   type ProviderInfo,
   type SectionTemplate,
@@ -88,6 +90,7 @@ export function SetupPage() {
   const navigate = useNavigate();
   const meetingQ = useMeeting(meetingId);
   const templatesQ = useTemplates();
+  const organizationsQ = useOrganizations();
   const providersQ = useProviders();
   const sectionsQ = useSections(meetingId);
   const templateVariablesQ = useTemplateVariables(meetingQ.data?.meeting.organization_id);
@@ -105,11 +108,16 @@ export function SetupPage() {
     () => templatesQ.data?.templates.find((t) => t.id === meeting?.template_id),
     [meeting, templatesQ.data],
   );
+  const organization = organizationsQ.data?.organizations.find(
+    (candidate) => candidate.id === meeting?.organization_id,
+  );
+  const isRgs = organization?.slug === "rgs";
 
   const [vars, setVars] = useState<Record<string, string>>({});
   const [meetingDate, setMeetingDate] = useState("");
   const [previousDate, setPreviousDate] = useState("");
   const [isAnnual, setIsAnnual] = useState(false);
+  const [meetingType, setMeetingType] = useState<MeetingType>("");
   const [provider, setProvider] = useState<ProviderInfo["id"] | "">("");
   const [model, setModel] = useState("");
 
@@ -119,6 +127,7 @@ export function SetupPage() {
     setMeetingDate(meeting.meeting_date ?? "");
     setPreviousDate(meeting.previous_meeting_date ?? "");
     setIsAnnual(!!meeting.is_annual);
+    setMeetingType(meeting.meeting_type || (meeting.is_annual ? "annual" : ""));
     if (meeting.ai_provider) setProvider(meeting.ai_provider as ProviderInfo["id"]);
     if (meeting.ai_model) setModel(meeting.ai_model);
   }, [meeting]);
@@ -205,20 +214,43 @@ export function SetupPage() {
         <DateField label="This meeting date" value={meetingDate} onChange={setMeetingDate} />
       </div>
 
-      <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-slate-200 bg-white p-3 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={isAnnual}
-          onChange={(e) => setIsAnnual(e.target.checked)}
-          className="mt-0.5 size-4"
-        />
-        <span className="text-sm">
-          <span className="font-medium text-slate-800">Annual meeting (adoption of accounts)</span>
-          <span className="block text-slate-500">
-            When on, the introduction uses the annual-meeting wording for the selected organization.
+      {isRgs ? (
+        <label className="mt-4 block rounded-lg border border-slate-200 bg-white p-3">
+          <span className="text-sm font-medium text-slate-800">Meeting type</span>
+          <select
+            value={meetingType}
+            onChange={(e) => setMeetingType(e.target.value as MeetingType)}
+            className="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+            required
+          >
+            <option value="">— select meeting type —</option>
+            <option value="annual">Annual meeting</option>
+            <option value="emergency">Emergency meeting</option>
+            <option value="extraordinary">Extraordinary meeting</option>
+          </select>
+          <span className="mt-1 block text-sm text-slate-500">
+            Changes only the first line of the introduction in the exported minutes.
           </span>
-        </span>
-      </label>
+        </label>
+      ) : (
+        <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-slate-200 bg-white p-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isAnnual}
+            onChange={(e) => setIsAnnual(e.target.checked)}
+            className="mt-0.5 size-4"
+          />
+          <span className="text-sm">
+            <span className="font-medium text-slate-800">
+              Annual meeting (adoption of accounts)
+            </span>
+            <span className="block text-slate-500">
+              When on, the introduction uses the annual-meeting wording for the selected
+              organization.
+            </span>
+          </span>
+        </label>
+      )}
 
       <div className="mt-8 mb-3 flex items-center justify-between gap-3">
         <h2 className="text-lg font-medium">Template variables</h2>
@@ -372,7 +404,8 @@ export function SetupPage() {
               variables: vars,
               meeting_date: meetingDate || undefined,
               previous_meeting_date: previousDate || undefined,
-              is_annual: isAnnual,
+              is_annual: isRgs ? meetingType === "annual" : isAnnual,
+              meeting_type: isRgs ? meetingType : undefined,
               ai_provider: provider || undefined,
               ai_model: model || undefined,
             });
@@ -392,7 +425,7 @@ export function SetupPage() {
             if (entries.length) await saveVariableValues.mutateAsync(entries).catch(() => {});
             navigate({ to: "/m/$id/sections", params: { id: String(meetingId) } });
           }}
-          disabled={update.isPending}
+          disabled={update.isPending || (isRgs && !meetingType)}
           className="bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           Save & continue →

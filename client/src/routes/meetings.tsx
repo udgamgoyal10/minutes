@@ -1,20 +1,50 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Check, Download, FileText, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { Check, Download, FileText, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import {
   downloadCombinedMeetingsExport,
   useDeleteMeeting,
   useMeetings,
+  useOrganizations,
   useUpdateMeeting,
   type Meeting,
 } from "../lib/api.ts";
 
 export function MeetingsListPage() {
   const { data, isLoading, error } = useMeetings();
+  const organizationsQ = useOrganizations();
   const del = useDeleteMeeting();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [organizationId, setOrganizationId] = useState("");
+  const [year, setYear] = useState("");
   const selectedIds = [...selected];
+  const organizations = organizationsQ.data?.organizations ?? [];
+  const organizationNames = useMemo(
+    () => new Map(organizations.map((organization) => [organization.id, organization.name])),
+    [organizations],
+  );
+  const years = useMemo(
+    () => [...new Set((data?.meetings ?? []).map(meetingYear))].sort((a, b) => b.localeCompare(a)),
+    [data?.meetings],
+  );
+  const filteredMeetings = useMemo(() => {
+    const search = searchTerm.trim().toLowerCase();
+    return (data?.meetings ?? []).filter((meeting) => {
+      const organizationName = organizationNames.get(meeting.organization_id ?? -1) ?? "";
+      if (organizationId && meeting.organization_id !== Number(organizationId)) return false;
+      if (year && meetingYear(meeting) !== year) return false;
+      if (!search) return true;
+      return [
+        meeting.label,
+        meeting.owner_email ?? "",
+        meeting.status,
+        meeting.meeting_date ?? "",
+        organizationName,
+      ].some((value) => value.toLowerCase().includes(search));
+    });
+  }, [data?.meetings, organizationId, organizationNames, searchTerm, year]);
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-6">Meetings</h1>
@@ -38,6 +68,49 @@ export function MeetingsListPage() {
       )}
       {data && data.meetings.length > 0 && (
         <>
+          <div className="mb-4 grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-[minmax(0,1fr)_minmax(12rem,auto)_minmax(8rem,auto)]">
+            <label className="relative block">
+              <span className="sr-only">Search meetings</span>
+              <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" />
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search meetings"
+                className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm"
+              />
+            </label>
+            <label>
+              <span className="sr-only">Filter by organization</span>
+              <select
+                value={organizationId}
+                onChange={(event) => setOrganizationId(event.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">All organizations</option>
+                {organizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="sr-only">Filter by year</span>
+              <select
+                value={year}
+                onChange={(event) => setYear(event.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">All years</option>
+                {years.map((meetingYearOption) => (
+                  <option key={meetingYearOption} value={meetingYearOption}>
+                    {meetingYearOption}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <button
               type="button"
@@ -53,40 +126,51 @@ export function MeetingsListPage() {
               disabled={exporting || selectedIds.length === 0}
               className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white rounded-md px-3 py-2 text-sm font-medium disabled:opacity-50"
             >
-              {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              {exporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
               Export selected to one .docx
             </button>
             <span className="text-sm text-slate-500">
               {selectedIds.length} selected; export is ordered by meeting date.
             </span>
           </div>
-          <ul className="space-y-2">
-            {data.meetings.map((m) => (
-              <MeetingRow
-                key={m.id}
-                meeting={m}
-                selected={selected.has(m.id)}
-                onSelect={(checked) => {
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (checked) next.add(m.id);
-                    else next.delete(m.id);
-                    return next;
-                  });
-                }}
-                onDelete={async () => {
-                  if (!confirm(`Delete meeting "${m.label}"? This cannot be undone.`)) return;
-                  await del.mutateAsync(m.id);
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    next.delete(m.id);
-                    return next;
-                  });
-                }}
-                deleting={del.isPending}
-              />
-            ))}
-          </ul>
+          {filteredMeetings.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
+              No meetings match the current search and filters.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {filteredMeetings.map((m) => (
+                <MeetingRow
+                  key={m.id}
+                  meeting={m}
+                  organizationName={organizationNames.get(m.organization_id ?? -1)}
+                  selected={selected.has(m.id)}
+                  onSelect={(checked) => {
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (checked) next.add(m.id);
+                      else next.delete(m.id);
+                      return next;
+                    });
+                  }}
+                  onDelete={async () => {
+                    if (!confirm(`Delete meeting "${m.label}"? This cannot be undone.`)) return;
+                    await del.mutateAsync(m.id);
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      next.delete(m.id);
+                      return next;
+                    });
+                  }}
+                  deleting={del.isPending}
+                />
+              ))}
+            </ul>
+          )}
         </>
       )}
     </div>
@@ -95,12 +179,14 @@ export function MeetingsListPage() {
 
 function MeetingRow({
   meeting,
+  organizationName,
   selected,
   onSelect,
   onDelete,
   deleting,
 }: {
   meeting: Meeting;
+  organizationName?: string;
   selected: boolean;
   onSelect: (checked: boolean) => void;
   onDelete: () => Promise<void> | void;
@@ -176,7 +262,10 @@ function MeetingRow({
               </button>
             </div>
             <p className="text-sm text-slate-500">
-              {meeting.owner_email ? `${meeting.owner_email} · ` : ""}{meeting.meeting_date ? `Meeting date: ${meeting.meeting_date} · ` : ""}Status: {meeting.status} · updated {new Date(meeting.updated_at).toLocaleString()}
+              {organizationName ? `${organizationName} · ` : ""}
+              {meeting.owner_email ? `${meeting.owner_email} · ` : ""}
+              {meeting.meeting_date ? `Meeting date: ${meeting.meeting_date} · ` : ""}Status:{" "}
+              {meeting.status} · updated {new Date(meeting.updated_at).toLocaleString()}
             </p>
           </>
         )}
@@ -203,4 +292,8 @@ function MeetingRow({
       )}
     </li>
   );
+}
+
+function meetingYear(meeting: Meeting): string {
+  return (meeting.meeting_date ?? meeting.created_at).slice(0, 4);
 }

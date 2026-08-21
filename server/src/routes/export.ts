@@ -15,6 +15,8 @@ type Ctx = {
   meeting_date: string | null;
   previous_meeting_date: string | null;
   is_annual: number;
+  meeting_type: string;
+  organization_slug: string;
   label: string;
   docx_path: string;
   parsed_json: string;
@@ -37,14 +39,37 @@ function applyAnnualMeetingWording(sections: ApprovedSection[]): ApprovedSection
   });
 }
 
+function applyRgsMeetingTypeWording(
+  sections: ApprovedSection[],
+  meetingType: string,
+): ApprovedSection[] {
+  const opening = {
+    annual: "Minutes of the Annual meeting of the",
+    emergency: "Minutes of an Emergency meeting of the",
+    extraordinary: "Minutes of an Extraordinary meeting of the",
+  }[meetingType];
+  if (!opening) return sections;
+  return sections.map((section) => {
+    if (section.key !== "introduction" && !section.key.endsWith("-introduction")) return section;
+    return {
+      ...section,
+      content_md: section.content_md.replace(
+        /^Minutes of (?:the Annual(?: General)? Meeting|an Emergency meeting|an Extraordinary meeting|the Meeting) of the\b/i,
+        opening,
+      ),
+    };
+  });
+}
+
 function loadCtx(meetingId: number, user: { id: number; role: string }): Ctx | null {
   if (isAdminRole(user.role)) {
     return (
       db
         .query<Ctx, [number]>(
-          `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
+          `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.meeting_type, m.label, m.created_at, t.docx_path, t.parsed_json, o.slug AS organization_slug
        FROM meetings m
        JOIN meeting_templates t ON t.id = m.template_id
+       JOIN organizations o ON o.id = COALESCE(m.organization_id, t.organization_id)
        WHERE m.id = ?`,
         )
         .get(meetingId) ?? null
@@ -53,9 +78,10 @@ function loadCtx(meetingId: number, user: { id: number; role: string }): Ctx | n
   return (
     db
       .query<Ctx, [number, number]>(
-        `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.label, m.created_at, t.docx_path, t.parsed_json
+        `SELECT m.id, m.variables_json, m.meeting_date, m.previous_meeting_date, m.is_annual, m.meeting_type, m.label, m.created_at, t.docx_path, t.parsed_json, o.slug AS organization_slug
      FROM meetings m
      JOIN meeting_templates t ON t.id = m.template_id
+     JOIN organizations o ON o.id = COALESCE(m.organization_id, t.organization_id)
      WHERE m.id = ? AND m.user_id = ?`,
       )
       .get(meetingId, user.id) ?? null
@@ -68,14 +94,19 @@ function loadSections(meetingId: number, ctx: Ctx, filled: boolean): ApprovedSec
       "SELECT section_key as key, ordinal, title, content_md, template_body_text FROM section_drafts WHERE meeting_id = ? ORDER BY ordinal",
     )
     .all(meetingId);
-  const annualized = ctx.is_annual ? applyAnnualMeetingWording(rows) : rows;
-  if (!filled) return annualized;
+  const adjusted =
+    ctx.organization_slug === "rgs" && ctx.meeting_type
+      ? applyRgsMeetingTypeWording(rows, ctx.meeting_type)
+      : ctx.is_annual
+        ? applyAnnualMeetingWording(rows)
+        : rows;
+  if (!filled) return adjusted;
   const variables = buildTemplateVariables({
     variables: JSON.parse(ctx.variables_json) as Record<string, string>,
     meetingDate: ctx.meeting_date,
     previousMeetingDate: ctx.previous_meeting_date,
   });
-  return annualized.map((row) => ({
+  return adjusted.map((row) => ({
     ...row,
     title: fillTemplateText(row.title, variables),
     content_md: fillTemplateText(row.content_md, variables),
